@@ -240,6 +240,7 @@ export interface Delivery {
     | "reminder"
     | "recovery"
     | "goal"
+    | "batch"
     | "continue";
   summary: string;
   artifact?: string;
@@ -258,6 +259,15 @@ export interface Delivery {
   goalDepth?: number;
   goalEvent?: "ready" | "submitted" | "accepted";
   submissionId?: string;
+  taskBatchId?: string;
+}
+export interface TaskBatch {
+  id: string;
+  missionId: string;
+  missionRevision: number;
+  policyRevision: number;
+  taskIds: string[];
+  notified: boolean;
 }
 export interface Mission {
   id: string;

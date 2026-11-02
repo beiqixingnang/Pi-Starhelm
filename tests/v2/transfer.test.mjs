@@ -111,6 +111,7 @@ test("a different agent home imports goals, member history, notes and evidence w
     const notifications = h.kernel.setNotificationPolicy({
       taskSuccess: false,
       taskFailure: true,
+      taskBatchSettled: true,
       goalReadyLevels: [2],
       goalAcceptedLevels: [1, 2],
     });

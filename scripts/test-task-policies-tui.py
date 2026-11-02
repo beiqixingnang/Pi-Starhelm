@@ -307,10 +307,61 @@ def main():
         assert not any(d.get("goalId") in [success_leaf["id"], failure_leaf["id"]] and d.get("goalEvent") == "accepted" for d in query("deliveries"))
         assert mission()["lastReportAt"] == report_at
         checks.append("notification changes preserved the hourly report schedule and never auto-accepted a goal")
+        # Reproduce hourly acceptance with quiet parallel workers, while an
+        # independent strict compilation timer keeps its exact own cadence.
+        tool("mission_notifications", {"action": "set", "taskSuccess": False, "taskFailure": False,
+            "taskBatchSettled": True, "goalReadyLevels": [], "goalAcceptedLevels": []})
+        wait(lambda: query("meta", "key='notificationPolicy'")[0].get("taskBatchSettled") is True,
+            "the lead enabled batch settlement independently of individual success and failure wakes")
+        timer_title = "Strict compiler progress " + uuid.uuid4().hex[:6]
+        tool("schedule", {"action": "create", "title": timer_title,
+            "prompt": "Inspect the independent compilation producer at the fixed deadline", "everySeconds": 12})
+        wait(lambda: any(s["title"] == timer_title for s in query("schedules")), "independent strict compilation reminder registered")
+        strict_timer = next(s for s in query("schedules") if s["title"] == timer_title)
+        old_batches = {d["id"] for d in query("deliveries") if d["kind"] == "batch"}
+        batch_tasks = {t["id"] for t in query("tasks")}
+        batch_files = [policy_dir / "batch-fast.txt", policy_dir / "batch-slow.txt"]
+        for owner, target, delay in [(executor, batch_files[0], 1200), (reviewer, batch_files[1], 4500)]:
+            tool("team_send", {"to": owner, "goalId": leaf["id"],
+                "message": "V2_TEST:" + json.dumps({"op": "tool", "name": "fixture_boundary_command", "args": {"file": str(target), "delayMs": delay}})})
+            wait(lambda: any(t["id"] not in batch_tasks and t["member"] == owner for t in query("tasks")),
+                "parallel artifact task accepted for " + owner)
+        wait(lambda: batch_files[0].exists() and any(t["id"] not in batch_tasks and t["member"] == executor and t["state"] == "completed" for t in query("tasks")),
+            "first parallel member finished and saved its real artifact")
+        assert not any(d["kind"] == "batch" and d["id"] not in old_batches for d in query("deliveries"))
+        wait(lambda: batch_files[1].exists() and any(d["kind"] == "batch" and d["id"] not in old_batches and d["state"] == "observed" for d in query("deliveries")),
+            "the final parallel member triggered one early lead review without waiting for the hourly report")
+        assert all(target.read_text() == "COMMAND_FINISHED" for target in batch_files)
+        assert len([d for d in query("deliveries") if d["kind"] == "batch" and d["id"] not in old_batches]) == 1
+        assert not any(d.get("scheduleId") == strict_timer["id"] for d in query("deliveries"))
+        assert next(s for s in query("schedules") if s["id"] == strict_timer["id"])["nextAt"] == strict_timer["nextAt"]
+        assert mission()["lastReportAt"] == report_at
+        # A separately registered external producer remains under strict
+        # monitoring after the member sessions have ended.
+        tool("mission_wait_external", {"reason": "Dedicated offline compilation producer is still pending",
+            "deadline": time.strftime("%Y-%m-%dT%H:%M:%SZ", time.gmtime(time.time() + 120))})
+        wait(lambda: bool(mission().get("externalWait")), "external compilation wait remained distinct from finished member tasks")
+        compilation_wait = mission()["externalWait"].copy()
+        reload("batch policy and unchanged strict reminder survived literal /reload in the same Pi process")
+        assert query("meta", "key='notificationPolicy'")[0]["taskBatchSettled"] is True
+        wait(lambda: any(d.get("scheduleId") == strict_timer["id"] and d["attempts"] > 0 for d in query("deliveries")),
+            "strict compilation check still woke the lead at its original deadline after batch completion and reload", timeout=20)
+        timer_delivery = next(d for d in query("deliveries") if d.get("scheduleId") == strict_timer["id"])
+        assert timer_delivery["createdAt"] >= strict_timer["nextAt"]
+        assert next(s for s in query("schedules") if s["id"] == strict_timer["id"])["nextAt"] == strict_timer["nextAt"] + 12000
+        assert len([d for d in query("deliveries") if d["kind"] == "batch" and d["id"] not in old_batches]) == 1
+        tool("schedule", {"action": "delete", "id": strict_timer["id"]})
+        wait(lambda: not any(s["id"] == strict_timer["id"] for s in query("schedules")), "strict timer was ended only by an explicit delete")
+        tool("mission_signal", {"waitId": compilation_wait["id"], "token": compilation_wait["token"]})
+        wait(lambda: not mission().get("externalWait"), "the external producer ended only through its exact signal")
+        tool("mission_notifications", {"action": "set", "taskFailure": True, "taskBatchSettled": False,
+            "goalReadyLevels": [2], "goalAcceptedLevels": [2]})
+        wait(lambda: query("meta", "key='notificationPolicy'")[0]["taskBatchSettled"] is False,
+            "the model disabled only early batch wakes and preserved the hourly review interval")
         tool("goal_pause", {"reason": "Preserve notification settings through reload"})
         wait(lambda: mission()["status"] == "paused", "notification fixture paused before reload")
         reload("literal /reload preserved independent success/failure and second-level notification settings")
-        assert query("meta", "key='notificationPolicy'")[0] == {"taskSuccess": False, "taskFailure": True, "goalReadyLevels": [2], "goalAcceptedLevels": [2]}
+        assert query("meta", "key='notificationPolicy'")[0] == {"taskSuccess": False, "taskFailure": True, "taskBatchSettled": False, "goalReadyLevels": [2], "goalAcceptedLevels": [2]}
         tool("mission_notifications", {"action": "reset"})
         wait(lambda: query("meta", "key='notificationPolicy'")[0]["taskSuccess"] is True, "notification defaults restored explicitly for the remaining regressions")
         tool("goal_resume", {"reason": "Continue the remaining dedicated regressions"})
@@ -728,7 +779,21 @@ def main():
         assert memory_rows("SELECT value FROM settings WHERE key='mode'") == [("summary",)]
         checks.append("compaction recovery preserved summary mode and existing goal acceptance")
         summary_control.unlink()
+        # The fixture acknowledges passive wakes without doing business work.
+        # A long real-TUI run may therefore reach the legitimate no-progress
+        # guard. Resume through the public exact-identity tool before the next
+        # active-goal lifecycle scenario; do not rewrite its SQLite state.
+        if mission()["status"] == "attention" and mission().get("blocker", {}).get("kind") == "no_progress":
+            failed, text = call_tool("mission_control", {"action": "resume", "goalId": mission()["id"],
+                "expectedRevision": mission().get("revision", 0),
+                "reason": "Saved evidence inspected; continue the dedicated exact-root lifecycle regression"})
+            assert not failed, text
         selected = mission()["id"]
+        failed, text = call_tool("mission_wait_external", {
+            "reason": "Dedicated lifecycle assertions await their explicit fixture signal",
+            "deadline": time.strftime("%Y-%m-%dT%H:%M:%SZ", time.gmtime(time.time() + 120))})
+        assert not failed, text
+        lifecycle_wait = mission()["externalWait"].copy()
         marker = "Unselected root identity regression " + uuid.uuid4().hex[:8]
         failed, text = call_tool("goal_plan", {"goals": [{"objective": marker, "criteria": ["Evidence belongs to this exact root"]}]})
         assert not failed
@@ -771,6 +836,8 @@ def main():
         assert mission() == held_mission
         assert all(next(m for m in query("goal_missions") if m["id"] == root)["status"] == "stopped" for root in [unselected["id"], paused_root["id"]])
         checks.append("archived main goals stayed archived while the selected user pause survived reload")
+        failed, text = call_tool("mission_signal", {"waitId": lifecycle_wait["id"], "token": lifecycle_wait["token"]})
+        assert not failed and mission()["humanPaused"], text
         line("/mission resume")
         wait(lambda: mission()["id"] == selected and mission()["status"] == "active", "only the selected goal explicitly resumed after archive regression")
 

@@ -40,7 +40,9 @@ test("runtime prompt sources contain mechanism contracts while project workflow 
 
 test("README documents the current prompt boundary instead of an old tool-count snapshot", () => {
   const readme = read("README.md");
-  assert.match(readme, /当前版本 \*\*2\.14\.0\*\*/);
+  assert.ok(
+    readme.includes(`当前版本 **${JSON.parse(read("package.json")).version}**`),
+  );
   assert.match(readme, /提示词与工作流边界/);
   assert.doesNotMatch(readme, /当前版本 \*\*2\.6\.1\*\*/);
 });

@@ -1,3 +1,9 @@
+# 2.15.0 — independent execution-batch wakeups (2026-11-02)
+
+- Add opt-in `mission_notifications.taskBatchSettled`, independent of individual success/failure and goal-level notifications. Track the current mission's execution round, queued dependencies, descendants and parent review; wake once after actual settlement with outcome counts, without accepting goals.
+- Preserve fixed-time `schedule` reminders and regular report deadlines. Registered external waits, unknown processes and user pauses prevent false batch readiness. New work, policy changes and goal revisions invalidate stale batch notifications; persisted rounds survive reload without replaying consumed events.
+- Add regression coverage for parallel artifact delivery, strict compilation checks, cancellation/failure, process reconciliation, parent review, persistence and same-process Pi `/reload`. Skills remain unchanged.
+
 # 2.14.0 — separate workflow guidance from runtime prompts (2026-10-29)
 
 - Reduce lead/member default prompt injection to runtime facts, IDs/revisions/epochs, permissions, recovery state and tool contracts. Remove the general goal-planning, delegation and team-workflow handbook from the plugin's default prompt path; project-specific workflow belongs in external skills.

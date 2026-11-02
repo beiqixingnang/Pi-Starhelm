@@ -3,6 +3,7 @@ import type { Delivery } from "./types.ts";
 export interface NotificationPolicy {
   taskSuccess: boolean;
   taskFailure: boolean;
+  taskBatchSettled: boolean;
   goalReadyLevels: number[];
   goalAcceptedLevels: number[];
 }
@@ -12,11 +13,12 @@ export function resolveNotificationPolicy(
   const policy = {
     taskSuccess: true,
     taskFailure: true,
+    taskBatchSettled: false,
     goalReadyLevels: [],
     goalAcceptedLevels: [],
     ...raw,
   };
-  for (const key of ["taskSuccess", "taskFailure"] as const)
+  for (const key of ["taskSuccess", "taskFailure", "taskBatchSettled"] as const)
     if (typeof policy[key] !== "boolean")
       throw new Error(`${key} must be a boolean`);
   for (const key of ["goalReadyLevels", "goalAcceptedLevels"] as const) {
@@ -39,6 +41,7 @@ export function triggersLead(delivery: Delivery, policy: NotificationPolicy) {
   if (delivery.to !== "lead") return true;
   if (delivery.kind === "result" && delivery.taskId) return policy.taskSuccess;
   if (delivery.kind === "failure" && delivery.taskId) return policy.taskFailure;
+  if (delivery.kind === "batch") return policy.taskBatchSettled;
   if (delivery.kind === "goal" && delivery.goalEvent === "submitted")
     return false;
   if (delivery.kind === "goal")

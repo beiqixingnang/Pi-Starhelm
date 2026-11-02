@@ -1900,7 +1900,7 @@ export default function (pi: ExtensionAPI) {
   tool(
     "mission_notifications",
     "Configure lead notification policy",
-    "Inspect/set/reset this conversation's persisted lead wake policy. Task success and failure are independent booleans. goalReadyLevels notifies when every required leaf has accepted evidence or successful settled work, labelled ready for acceptance; it never auto-accepts a goal. goalAcceptedLevels notifies only after goal_accept at those exact depths (1=main goal, 2=stage). Example: taskSuccess:false, taskFailure:true, goalReadyLevels:[2] suppresses leaf-task success wakes but wakes on failures and second-level batches ready for review. Empty level lists disable those goal notifications. Quiet results remain durable and can join scheduled reports or other wakes. Peer/parent handoffs, explicit decisions, runtime recovery and the report interval remain independent. Existing sessions can apply this directly without a slash command.",
+    "Inspect/set/reset persisted lead wake policy. taskSuccess and taskFailure independently control individual results. taskBatchSettled (default false) separately wakes once when the current mission's execution round, including queued work and descendants, fully settles; it reports outcomes without accepting goals. Enable before/during dispatch; enabling while idle does not replay old batches. Registered external waits and unknown processes prevent batch settlement. goalReadyLevels notifies when all required leaves are ready for acceptance; goalAcceptedLevels notifies after explicit acceptance at exact depths (1=main, 2=stage). Empty arrays disable level notifications. Quiet results remain saved. Batch wakes never advance, reset or cancel schedule reminders or the report interval. Peer/parent handoffs, decisions and runtime recovery remain independent.",
     Type.Object({
       action: optional(
         Type.Union([
@@ -1911,6 +1911,7 @@ export default function (pi: ExtensionAPI) {
       ),
       taskSuccess: optional(Type.Boolean()),
       taskFailure: optional(Type.Boolean()),
+      taskBatchSettled: optional(Type.Boolean()),
       goalReadyLevels: optional(
         Type.Array(Type.Integer({ minimum: 1, maximum: 12 }), { maxItems: 12 }),
       ),
@@ -1923,6 +1924,7 @@ export default function (pi: ExtensionAPI) {
       for (const key of [
         "taskSuccess",
         "taskFailure",
+        "taskBatchSettled",
         "goalReadyLevels",
         "goalAcceptedLevels",
       ])
@@ -1944,6 +1946,8 @@ export default function (pi: ExtensionAPI) {
           "Retained for explicit collection, the next scheduled report or another eligible wake",
         goalReadyMeaning:
           "Execution settled and ready for review; goal acceptance remains explicit",
+        taskBatchMeaning:
+          "Opt-in current-mission round settlement, once per round including descendants; fixed-time schedules and report deadlines stay unchanged",
       };
     },
   );

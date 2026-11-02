@@ -188,6 +188,7 @@ test(
               action: "set",
               taskSuccess: false,
               taskFailure: true,
+              taskBatchSettled: true,
               goalReadyLevels: [2],
               goalAcceptedLevels: [2, 1],
             },
@@ -202,6 +203,7 @@ test(
       assert.deepEqual(status.policy, {
         taskSuccess: false,
         taskFailure: true,
+        taskBatchSettled: true,
         goalReadyLevels: [2],
         goalAcceptedLevels: [1, 2],
       });
@@ -218,6 +220,106 @@ test(
       );
       assert.equal(reset.policy.taskSuccess, true);
       assert.deepEqual(reset.policy.goalReadyLevels, []);
+    }),
+);
+
+test(
+  "real parallel member artifacts trigger a batch wake before an unchanged fixed-time compilation reminder",
+  { timeout: 30000 },
+  () =>
+    harness(async (h) => {
+      await h.session.prompt(
+        'V2_TEST:{"op":"answer","text":"READY","noRepeatWake":true}',
+      );
+      await h.tool("goal_start", {
+        objective: "Review two files while monitoring an independent build",
+        criteria: ["Inspect both saved files"],
+      });
+      await h.tool("mission_notifications", {
+        action: "set",
+        taskSuccess: false,
+        taskFailure: false,
+        taskBatchSettled: true,
+      });
+      const schedule = JSON.parse(
+        (
+          await h.tool("schedule", {
+            action: "create",
+            title: "Strict build check",
+            prompt: "Check the separate compiler",
+            everySeconds: 10,
+          })
+        ).content[0].text,
+      );
+      const reportAt = (await h.snapshot()).nextReportAt;
+      const files = [path.join(h.cwd, "one.txt"), path.join(h.cwd, "two.txt")];
+      for (let i = 0; i < 2; i++) {
+        await h.tool("team_spawn", {
+          name: "batch-" + i,
+          role: "Write an isolated evidence artifact",
+          workspace: { execution: "files" },
+        });
+        await h.tool("team_send", {
+          to: "batch-" + i,
+          message:
+            "V2_TEST:" +
+            JSON.stringify({
+              op: "tool",
+              name: "fixture_boundary_command",
+              args: { file: files[i], delayMs: i ? 2500 : 750 },
+            }),
+        });
+      }
+      await until(
+        async () =>
+          (await h.snapshot()).tasks.filter((t) => t.state === "completed")
+            .length === 1,
+      );
+      assert.equal(
+        (await h.snapshot()).deliveries.some((d) => d.kind === "batch"),
+        false,
+      );
+      await until(async () =>
+        (await h.snapshot()).deliveries.some(
+          (d) => d.kind === "batch" && d.state === "observed",
+        ),
+      );
+      assert.deepEqual(
+        files.map((file) => fsSync.readFileSync(file, "utf8")),
+        ["COMMAND_FINISHED", "COMMAND_FINISHED"],
+      );
+      const settled = await h.snapshot();
+      assert.equal(
+        settled.deliveries.filter((d) => d.kind === "batch").length,
+        1,
+      );
+      assert.equal(
+        settled.deliveries.some((d) => d.scheduleId === schedule.id),
+        false,
+      );
+      assert.equal(
+        settled.schedules.find((s) => s.id === schedule.id).nextAt,
+        schedule.nextAt,
+      );
+      assert.equal(settled.nextReportAt, reportAt);
+      await until(async () =>
+        (await h.snapshot()).deliveries.some(
+          (d) => d.scheduleId === schedule.id && d.attempts > 0,
+        ),
+      );
+      const checked = await h.snapshot();
+      assert.equal(
+        checked.schedules.find((s) => s.id === schedule.id).nextAt,
+        schedule.nextAt + 10000,
+      );
+      assert.equal(
+        checked.deliveries.filter((d) => d.kind === "batch").length,
+        1,
+      );
+      await h.tool("schedule", { action: "delete", id: schedule.id });
+      await h.tool("goal_pause", {
+        reason: "Parallel batch and strict timer regression finished",
+      });
     }),
 );
 
@@ -3767,7 +3869,10 @@ test(
         instructions,
         /old claims that only a user slash command/,
       );
-      assert.match(instructions, /Mission Control exposes stateful tools directly/);
+      assert.match(
+        instructions,
+        /Mission Control exposes stateful tools directly/,
+      );
       assert.match(instructions, /Current Mission Control recovery plan/);
       assert.equal((await h.snapshot()).mission.status, "attention");
       assert.equal(

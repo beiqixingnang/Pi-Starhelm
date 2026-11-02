@@ -30,6 +30,7 @@ import {
   type Schedule,
   type Settings,
   type Task,
+  type TaskBatch,
   type Wake,
   type WorkerFactory,
   type WorkerHandle,
@@ -1714,6 +1715,7 @@ export class MissionKernel {
       reviewDeliveryIds: [],
     };
     this.store.putTask(t);
+    this.trackTaskBatch(mission);
     this.store.event("task.accepted", id, { member: name, parent: parent?.id });
     this.turnActed = true;
     this.changed();
@@ -1870,6 +1872,7 @@ export class MissionKernel {
           | "goalDepth"
           | "goalEvent"
           | "submissionId"
+          | "taskBatchId"
         >
       >,
   ): Delivery {
@@ -2061,10 +2064,22 @@ export class MissionKernel {
     );
   }
   setNotificationPolicy(patch: Partial<NotificationPolicy>, reset = false) {
+    const previous = this.notificationPolicy();
     const policy = resolveNotificationPolicy(
       reset ? {} : { ...this.notificationPolicy(), ...patch },
     );
     this.store.set("notificationPolicy", policy);
+    const mission = this.store.mission();
+    if (previous.taskBatchSettled !== policy.taskBatchSettled) {
+      this.store.set(
+        "taskBatchPolicyRevision",
+        (this.store.get<number>("taskBatchPolicyRevision") ?? 0) + 1,
+      );
+      if (mission) {
+        this.store.unset(`taskBatch:${mission.id}`);
+        if (policy.taskBatchSettled) this.trackTaskBatch(mission);
+      }
+    }
     if (this.reservation && !this.leadRunning) {
       const batch = this.reservation.batchId;
       this.generation++;
@@ -2081,20 +2096,104 @@ export class MissionKernel {
     }
     for (const delivery of this.store.deliveries("lead"))
       if (
-        delivery.kind === "goal" &&
+        (delivery.kind === "goal" || delivery.kind === "batch") &&
         delivery.state === "pending" &&
         delivery.goalEvent !== "submitted" &&
         !triggersLead(delivery, policy)
       ) {
         delivery.state = "superseded";
         delivery.reason =
-          "This goal notification was disabled; its goal and acceptance history remain available.";
+          "This goal or execution-batch notification was disabled; original results and acceptance history remain available.";
         this.store.putDelivery(delivery);
       }
     this.store.event("notification.policy", this.options.sessionId, policy);
     this.turnActed = true;
     this.changed();
     return policy;
+  }
+  private trackTaskBatch(mission: Mission) {
+    if (!this.notificationPolicy().taskBatchSettled) return;
+    const active = this.store
+      .missionTasks(mission.id)
+      .filter((task) => !terminal(task));
+    if (!active.length) return;
+    const key = `taskBatch:${mission.id}`;
+    const policyRevision =
+      this.store.get<number>("taskBatchPolicyRevision") ?? 0;
+    let batch = this.store.get<TaskBatch>(key);
+    if (
+      !batch ||
+      batch.notified ||
+      batch.missionRevision !== (mission.revision ?? 0) ||
+      batch.policyRevision !== policyRevision
+    )
+      batch = {
+        id: randomUUID(),
+        missionId: mission.id,
+        missionRevision: mission.revision ?? 0,
+        policyRevision,
+        taskIds: [],
+        notified: false,
+      };
+    batch.taskIds = [
+      ...new Set([...batch.taskIds, ...active.map((task) => task.id)]),
+    ];
+    this.store.set(key, batch);
+  }
+  private taskBatchIsSettled(batch: TaskBatch, mission: Mission) {
+    if (
+      mission.status !== "active" ||
+      mission.humanPaused ||
+      mission.externalWait ||
+      batch.missionId !== mission.id ||
+      batch.missionRevision !== (mission.revision ?? 0) ||
+      batch.policyRevision !==
+        (this.store.get<number>("taskBatchPolicyRevision") ?? 0) ||
+      !batch.taskIds.length
+    )
+      return false;
+    const tasks = this.store.missionTasks(mission.id);
+    const ids = new Set(tasks.map((task) => task.id));
+    return (
+      batch.taskIds.every((id) => ids.has(id)) &&
+      tasks.every(
+        (task) =>
+          terminal(task) &&
+          !this.live.has(task.id) &&
+          !["unknown", "running"].includes(task.processState),
+      )
+    );
+  }
+  private notifyTaskBatchSettled(mission: Mission) {
+    if (!this.notificationPolicy().taskBatchSettled) return;
+    const key = `taskBatch:${mission.id}`;
+    const batch = this.store.get<TaskBatch>(key);
+    if (!batch || batch.notified || !this.taskBatchIsSettled(batch, mission))
+      return;
+    const tasks = batch.taskIds.map((id) => this.store.task(id)!);
+    const counts = Object.fromEntries(
+      ["completed", "failed", "cancelled", "interrupted"].map((state) => [
+        state,
+        tasks.filter((task) => task.state === state).length,
+      ]),
+    );
+    this.store.transaction(() => {
+      batch.notified = true;
+      this.store.set(key, batch);
+      this.delivery({
+        key: `task-batch:${batch.id}`,
+        from: "task-ledger",
+        to: "lead",
+        kind: "batch",
+        taskBatchId: batch.id,
+        summary: `Execution batch settled for mission ${mission.id}: ${tasks.length} tasks; ${JSON.stringify(counts)}. No tracked task remains running, queued or waiting. Collect saved results and inspect unfinished goals before acceptance or further dispatch. This is not goal acceptance or proof that untracked external builds ended. Existing fixed-time reminders and report deadlines are unchanged.`,
+      });
+      this.store.event("task.batch-settled", batch.id, {
+        missionId: mission.id,
+        taskIds: batch.taskIds,
+        counts,
+      });
+    });
   }
   private notifyGoalAccepted(id: string, acceptanceId: string) {
     const goal = this.goals.node(id);
@@ -2231,7 +2330,21 @@ export class MissionKernel {
       });
     }
   }
-  private validGoalDelivery(delivery: Delivery) {
+  private validLeadDelivery(delivery: Delivery) {
+    if (delivery.kind === "batch") {
+      const mission = delivery.missionId
+        ? this.store.savedMission(delivery.missionId)
+        : undefined;
+      const batch =
+        mission && this.store.get<TaskBatch>(`taskBatch:${mission.id}`);
+      return Boolean(
+        batch &&
+          mission &&
+          batch.notified &&
+          delivery.taskBatchId === batch.id &&
+          this.taskBatchIsSettled(batch, mission),
+      );
+    }
     if (delivery.kind !== "goal") return true;
     const goal = delivery.goalId ? this.store.goal(delivery.goalId) : undefined;
     if (!goal || goal.revision !== delivery.goalRevision) return false;
@@ -3029,6 +3142,7 @@ export class MissionKernel {
         .deliveries("lead")
         .filter((d) => !["cancelled", "superseded"].includes(d.state)),
       schedules: this.store.schedules(),
+      taskBatch: m ? this.store.get<TaskBatch>(`taskBatch:${m.id}`) : undefined,
       lifecycle: this.store.archiveCounts(),
       maintenance: !this.closing,
       held: this.userHold,
@@ -3085,10 +3199,10 @@ export class MissionKernel {
     try {
       const now = this.now();
       for (const delivery of this.store.deliveries("lead"))
-        if (delivery.state === "pending" && !this.validGoalDelivery(delivery)) {
+        if (delivery.state === "pending" && !this.validLeadDelivery(delivery)) {
           delivery.state = "superseded";
           delivery.reason =
-            "Goal revision or state changed; notification is no longer current.";
+            "Goal or execution batch changed; notification is no longer current.";
           this.store.putDelivery(delivery);
         }
       this.store.transaction(() => {
@@ -3269,6 +3383,7 @@ export class MissionKernel {
           this.launch(task);
         }
         this.notifyReadyGoals(mission);
+        this.notifyTaskBatchSettled(mission);
         if (
           !mission.externalWait &&
           now - mission.lastReportAt >= this.settings.progressIntervalMs
@@ -3369,7 +3484,7 @@ export class MissionKernel {
     const m = this.store.mission();
     const policy = this.notificationPolicy();
     const trigger = (d: Delivery) =>
-      triggersLead(d, policy) && this.validGoalDelivery(d);
+      triggersLead(d, policy) && this.validLeadDelivery(d);
     if (
       this.closing ||
       this.userHold ||
@@ -4185,7 +4300,7 @@ export class MissionKernel {
             d.batchId === batchId &&
             ["leased", "admitted"].includes(d.state) &&
             triggersLead(d, this.notificationPolicy()) &&
-            this.validGoalDelivery(d),
+            this.validLeadDelivery(d),
         )
     );
   }
