@@ -619,6 +619,66 @@ def main():
         assert mission()["id"] == original["id"]
         checks.append("the renamed pi-starhelm package loaded through the same-session reload and retained its original goal ledger")
 
+        # Physical Escape bytes must interrupt the current execution tree even
+        # while the lead is idle. Escape inside the member viewer only returns.
+        line("/mission resume")
+        wait(lambda: mission()["status"] == "active", "Escape fixture explicitly resumed the selected test goal")
+        escape_goal_title = "Physical Escape interruption " + uuid.uuid4().hex[:6]
+        failed, text = call_tool("goal_plan", {"goals": [{"parentId": original["id"],
+            "objective": escape_goal_title, "criteria": ["Retain this definition after cancelling its tasks"]}]})
+        assert not failed, text
+        escape_goal = next(n for n in query("goal_nodes") if n["objective"] == escape_goal_title)
+        escape_members = {m["name"]: m["id"] for m in query("members") if m["name"] in [executor, reviewer]}
+        escape_timer_title = "Escape preserves compiler monitor " + uuid.uuid4().hex[:6]
+        failed, text = call_tool("schedule", {"action": "create", "title": escape_timer_title,
+            "prompt": "Read the independent producer at its unchanged deadline", "everySeconds": 60})
+        assert not failed, text
+        escape_timer = json.loads(text)
+        for phase in ["idle", "streaming"]:
+            if phase == "streaming":
+                failed, text = call_tool("goal_resume", {"goalId": original["id"], "source": "user", "reason": "Explicitly continue the dedicated Escape regression"})
+                assert not failed, text
+            phase_tasks = []
+            for owner in [executor, reviewer]:
+                marker = policy_dir / ("escape-" + phase + "-" + owner + ".started")
+                failed, text = call_tool("team_send", {"to": owner, "goalId": escape_goal["id"],
+                    "message": "V2_TEST:" + json.dumps({"op": "hang", "startedFile": str(marker)})})
+                assert not failed, text
+                phase_tasks.append(json.loads(text)["taskId"])
+                wait(marker.exists, "real member provider began its " + phase + " Escape fixture: " + owner)
+            report_before_escape = mission()["lastReportAt"]
+            if phase == "idle":
+                end = len(visible)
+                line("/agents " + reviewer)
+                wait(lambda: "Esc 返回团队" in visible[end:], "member conversation opened while the two providers kept working")
+                os.write(master, b"\x1b")
+                quiet(.3)
+                os.write(master, b"\x1b")
+                editor_ready("panel Escape returned to the main editor without stopping the members")
+                assert all(next(t for t in query("tasks") if t["id"] == task_id)["state"] == "running" for task_id in phase_tasks)
+                assert mission()["status"] == "active"
+            else:
+                lead_marker = policy_dir / "escape-main.started"
+                line("V2_TEST:" + json.dumps({"op": "hang", "startedFile": str(lead_marker)}))
+                wait(lead_marker.exists, "main model was streaming before physical Escape")
+            os.write(master, b"\x1b")
+            wait(lambda: mission()["status"] == "paused" and all(
+                next(t for t in query("tasks") if t["id"] == task_id)["state"] == "cancelled" and
+                next(t for t in query("tasks") if t["id"] == task_id)["processState"] == "stopped"
+                for task_id in phase_tasks), "physical Escape stopped the " + phase + " lead's entire managed execution batch")
+            assert mission()["id"] == original["id"] and mission()["pauseSource"] == "user" and not mission().get("archivedAt")
+            assert {m["name"]: m["id"] for m in query("members") if m["name"] in escape_members} == escape_members
+            assert mission()["lastReportAt"] == report_before_escape
+            assert next(s for s in query("schedules") if s["id"] == escape_timer["id"])["nextAt"] == escape_timer["nextAt"]
+            editor_ready("the interrupted main editor accepted input after " + phase + " Escape")
+            reload("paused goal, retained members and cancelled tasks survived literal /reload after " + phase + " Escape")
+            assert mission()["status"] == "paused" and mission()["humanPaused"]
+            assert all(next(t for t in query("tasks") if t["id"] == task_id)["state"] == "cancelled" for task_id in phase_tasks)
+        failed, text = call_tool("schedule", {"action": "delete", "id": escape_timer["id"]})
+        assert not failed, text
+        failed, text = call_tool("goal_resume", {"goalId": original["id"], "source": "user", "reason": "Explicitly continue the remaining isolated regressions"})
+        assert not failed, text
+
         failed, text = call_tool("context_mode", {"mode": "notes"})
         assert failed and "current user's authorization" in text
         checks.append("a real model cannot switch the summary conversation to notes without human authorization")

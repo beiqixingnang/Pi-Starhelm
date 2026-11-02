@@ -1,3 +1,9 @@
+# 2.17.0 — Escape interrupts the current managed task tree (2026-11-02)
+
+- Connect Escape in the main editor to a temporary user pause followed by cancellation of running, queued, waiting and descendant tasks in the selected goal. Preserve goal definitions, evidence, budgets, member identities and reminder schedules; require explicit continuation without replaying cancelled commands.
+- Keep native Escape input handling for lead cancellation and queued text. Respect member/goal panels, blocking extension prompts, native selectors, overlays and autocomplete; unsubscribe handlers on reload and retain unknown-process evidence when termination cannot be confirmed.
+- Cover native-editor routing, idle-lead interruption, real host command/grandchild termination, repeated Escape, scope/hold preservation and paused reload. Exercise literal Escape bytes in the dedicated Pi TUI with both idle and streaming lead states.
+
 # 2.16.1 — reliable Windows directory-lock diagnostics (2026-11-02)
 
 - Enumerate process IDs, parent IDs and executable names with the native Toolhelp process snapshot instead of starting a CIM/WMI provider. Retain the existing read-only, filtered current-directory inspection and non-exhaustive result contract.

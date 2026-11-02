@@ -112,6 +112,7 @@ export class MissionKernel {
   private collected = new Set<string>();
   private previews = new Map<string, Map<string, PublicActivity>>();
   private relocating = false;
+  private interrupting?: Promise<void>;
   publicActivity(memberId: string): PublicActivity[] {
     return [...(this.previews.get(memberId)?.values() ?? [])];
   }
@@ -2362,6 +2363,61 @@ export class MissionKernel {
           ) &&
           !this.goals.blockers(goal.id).length;
   }
+  /** Synchronously hold the selected goal, then settle its managed task tree.
+   * Escape is a temporary interruption, not goal cancellation or archival.
+   */
+  interruptByUser(): Promise<void> {
+    if (this.interrupting) return this.interrupting;
+    const mission = this.store.mission();
+    if (
+      this.closing ||
+      !mission ||
+      ["complete", "stopped"].includes(mission.status)
+    )
+      return Promise.resolve();
+    this.generation++;
+    this.userHold = true;
+    this.store.set("escapeHold", true);
+    this.reservation = undefined;
+    mission.status = "paused";
+    mission.humanPaused = true;
+    mission.pauseSource = "user";
+    mission.reason =
+      "User interrupted with Escape; inspect retained results before explicitly continuing";
+    mission.updatedAt = this.now();
+    this.store.set("mission", mission);
+    for (const delivery of this.store.deliveries("lead"))
+      if (
+        delivery.missionId === mission.id &&
+        ["leased", "admitted"].includes(delivery.state)
+      ) {
+        delivery.state = "pending";
+        delete delivery.batchId;
+        this.store.putDelivery(delivery);
+      }
+    const active = this.store
+      .missionTasks(mission.id)
+      .filter((task) => !terminal(task));
+    const ids = new Set(active.map((task) => task.id));
+    this.store.event("user.interrupt", mission.id, { taskIds: [...ids] });
+    // Record user intent and stop activity accounting before waiting for kills.
+    this.changed();
+    const stopping = Promise.all(
+      active
+        .filter((task) => !task.parentId || !ids.has(task.parentId))
+        .map((task) =>
+          this.cancelTask(task.id, "User interrupted with Escape"),
+        ),
+    )
+      .then(() => {
+        if (!this.closing) this.changed();
+      })
+      .finally(() => {
+        if (this.interrupting === stopping) this.interrupting = undefined;
+      });
+    this.interrupting = stopping;
+    return stopping;
+  }
   async userControl(action: "pause" | "resume" | "stop") {
     const m = this.store.mission();
     if (action === "resume" && this.store.get("relocationHold")) {
@@ -4490,6 +4546,7 @@ export class MissionKernel {
         (executions.has(task.id) ? "unknown" : "stopped");
       this.store.putTask(task);
     }
+    await this.interrupting;
     this.store.close();
   }
 }

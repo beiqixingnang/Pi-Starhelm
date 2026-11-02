@@ -701,6 +701,8 @@ export default function (pi: ExtensionAPI) {
             return;
           }
           if (command.op === "hang") {
+            if (command.startedFile)
+              fs.writeFileSync(command.startedFile, "PROVIDER_WAIT_STARTED");
             stream.push({ type: "start", partial: message });
             const abort = () => {
               message.stopReason = "aborted";

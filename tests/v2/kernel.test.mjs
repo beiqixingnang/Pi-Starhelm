@@ -111,6 +111,178 @@ async function using(fn) {
   }
 }
 
+test("Escape settles running, queued and descendant work while retaining the paused goal, budgets, artifacts and reminders", () =>
+  using(async (h) => {
+    h.idle(false);
+    h.add("parent", ["child"]);
+    h.add("child");
+    h.add("queued");
+    const parent = h.kernel.dispatch(
+      "parent",
+      "Review the child after it finishes",
+    );
+    const mission = h.kernel.store.mission();
+    mission.outputTokens = 71;
+    mission.turns = 5;
+    h.kernel.store.set("mission", mission);
+    await flush();
+    h.kernel.memberRequest(h.workers[0].assignment.token, {
+      id: "child",
+      op: "message",
+      to: "child",
+      operation: "assign",
+      message: "Implement an isolated child",
+    });
+    h.kernel.dispatch("queued", "Wait for the parent", {
+      dependsOn: parent.id,
+    });
+    await flush();
+    const reminder = h.kernel.addSchedule(
+      "Strict compiler monitor",
+      "Inspect the existing producer",
+      110000,
+      10000,
+    );
+    const artifact = h.kernel.store.artifact(
+      "saved-before-escape",
+      "result",
+      "SAVED_IMPLEMENTATION",
+    );
+    const reportAt = h.kernel.snapshot().nextReportAt;
+    const goalBefore = h.kernel.goals.node(mission.id);
+    const members = h.kernel.store.members().map((member) => member.id);
+    await h.kernel.interruptByUser();
+    const paused = h.kernel.store.mission();
+    assert.equal(paused.id, mission.id);
+    assert.equal(paused.status, "paused");
+    assert.equal(paused.pauseSource, "user");
+    assert.equal(paused.outputTokens, 71);
+    assert.equal(paused.turns, 5);
+    assert.equal(paused.archivedAt, undefined);
+    assert.deepEqual(h.kernel.goals.node(mission.id), goalBefore);
+    assert.deepEqual(
+      h.kernel.store.members().map((member) => member.id),
+      members,
+    );
+    assert.equal(fs.readFileSync(artifact, "utf8"), "SAVED_IMPLEMENTATION");
+    assert.ok(
+      h.kernel.store
+        .missionTasks(mission.id)
+        .every(
+          (task) =>
+            task.state === "cancelled" && task.processState === "stopped",
+        ),
+    );
+    assert.equal(
+      h.workers.length,
+      2,
+      "queued work must never launch during cancellation",
+    );
+    assert.ok(
+      h.workers.every((worker) => worker.signal.aborted && worker.stopped),
+    );
+    assert.equal(h.kernel.store.schedule(reminder.id).nextAt, 110000);
+    assert.equal(h.kernel.snapshot().nextReportAt, reportAt);
+    h.idle();
+    h.advance(3600000);
+    await h.kernel.tick();
+    assert.equal(h.wakes.length, 0);
+    assert.equal(h.workers.length, 2);
+    await h.restart();
+    assert.equal(h.kernel.store.mission().status, "paused");
+    assert.equal(h.kernel.snapshot().held, true);
+    h.kernel.onHumanInput("How is it going?");
+    await h.kernel.tick();
+    assert.equal(h.kernel.store.mission().humanPaused, true);
+    assert.throws(
+      () => h.kernel.resumeGoal(mission.id),
+      /user|pause|continue/i,
+    );
+    h.kernel.resumeGoal(
+      mission.id,
+      "User explicitly requested continuing",
+      0,
+      "user",
+    );
+    assert.equal(h.kernel.store.mission().outputTokens, 71);
+    assert.equal(
+      h.workers.length,
+      2,
+      "explicit resume alone must not replay cancelled tasks",
+    );
+  }));
+
+test("repeated Escape shares cancellation and retains unknown process evidence instead of declaring it stopped", () =>
+  using(async (h) => {
+    h.idle(false);
+    h.add("worker");
+    const task = h.kernel.dispatch("worker", "A process takes time to stop");
+    await flush();
+    let release;
+    const gate = new Promise((resolve) => {
+      release = resolve;
+    });
+    h.workers[0].stop = async () => {
+      await gate;
+      h.workers[0].resolve({
+        ok: false,
+        text: "Unconfirmed child",
+        processState: "unknown",
+      });
+    };
+    const first = h.kernel.interruptByUser();
+    const second = h.kernel.interruptByUser();
+    assert.equal(first, second);
+    assert.equal(h.kernel.store.mission().status, "paused");
+    assert.equal(h.kernel.store.task(task.id).processState, "unknown");
+    assert.throws(
+      () => h.kernel.dispatch("worker", "Do not run new work"),
+      /unknown|paused/i,
+    );
+    release();
+    await first;
+    assert.equal(h.kernel.store.task(task.id).state, "cancelled");
+    assert.equal(h.kernel.store.task(task.id).processState, "unknown");
+    assert.throws(() => h.kernel.resumeTask(task.id), /unknown/i);
+    await h.restart();
+    assert.equal(h.kernel.store.task(task.id).processState, "unknown");
+  }));
+
+test("Escape preserves independent decisions and unrelated goal work", () =>
+  using(async (h) => {
+    h.idle(false);
+    h.add("worker");
+    const task = h.kernel.dispatch("worker", "Current mission work");
+    await flush();
+    const other = {
+      ...h.kernel.store.task(task.id),
+      id: "unrelated",
+      missionId: "another-goal",
+      state: "queued",
+      processState: "not-started",
+    };
+    h.kernel.store.putTask(other);
+    const mission = h.kernel.store.mission();
+    mission.decision = {
+      id: "business-choice",
+      question: "May we publish?",
+      taskIds: [task.id],
+      revision: 0,
+      humanVersion: 0,
+      createdAt: 100000,
+    };
+    mission.blocker = { kind: "budget", reason: "Independent budget limit" };
+    h.kernel.store.set("mission", mission);
+    await h.kernel.interruptByUser();
+    assert.deepEqual(h.kernel.store.mission().decision, mission.decision);
+    assert.deepEqual(h.kernel.store.mission().blocker, mission.blocker);
+    assert.deepEqual(h.kernel.store.task(other.id), other);
+    assert.throws(
+      () => h.kernel.resumeGoal(mission.id, "Continue", 0, "user"),
+      /independent/i,
+    );
+  }));
+
 test("recovery guidance leads large status and prompt views without assuming unknown executions stopped", () =>
   using(async (h) => {
     h.idle(false);

@@ -13,7 +13,7 @@ import {
   type ExtensionAPI,
   type ExtensionContext,
 } from "@earendil-works/pi-coding-agent";
-import { Text } from "@earendil-works/pi-tui";
+import { Editor, Text, matchesKey, type TUI } from "@earendil-works/pi-tui";
 import { MissionKernel } from "../../runtime/kernel.ts";
 import { runArchive } from "../../runtime/archive/job.ts";
 import { openBridge } from "../../runtime/bridge.ts";
@@ -179,6 +179,9 @@ export default function (pi: ExtensionAPI) {
   let removeCompactionListener: (() => void) | undefined;
   let activeCompactionRun: string | undefined;
   let agentsOpen = false;
+  let blockingPrompt = false;
+  let terminalUi: (TUI & { getFocusedComponent?(): unknown }) | undefined;
+  let removeTerminalInput: (() => void) | undefined;
   const archiveControllers = new Set<AbortController>();
   let archiveGeneration = 0;
   const sourceCache = new Map<string, string>();
@@ -307,28 +310,31 @@ export default function (pi: ExtensionAPI) {
         if (!agentsOpen)
           ctx.ui.setWidget(
             "mission-control",
-            (_tui, theme) => ({
-              render: (width) => {
-                try {
-                  return board(
-                    current(),
-                    width,
-                    false,
-                    theme,
-                    process.stdout.rows ?? 30,
-                  );
-                } catch {
-                  return board(
-                    current(),
-                    width,
-                    false,
-                    undefined,
-                    process.stdout.rows ?? 30,
-                  );
-                }
-              },
-              invalidate() {},
-            }),
+            (tui, theme) => {
+              terminalUi = tui;
+              return {
+                render: (width) => {
+                  try {
+                    return board(
+                      current(),
+                      width,
+                      false,
+                      theme,
+                      process.stdout.rows ?? 30,
+                    );
+                  } catch {
+                    return board(
+                      current(),
+                      width,
+                      false,
+                      undefined,
+                      process.stdout.rows ?? 30,
+                    );
+                  }
+                },
+                invalidate() {},
+              };
+            },
             { placement: "aboveEditor" },
           );
         ctx.ui.setStatus(
@@ -344,6 +350,10 @@ export default function (pi: ExtensionAPI) {
     if (panel?.scope === "lead") refresh();
   });
   const close = async () => {
+    removeTerminalInput?.();
+    removeTerminalInput = undefined;
+    terminalUi = undefined;
+    blockingPrompt = false;
     archiveGeneration++;
     for (const controller of archiveControllers) controller.abort();
     removeCompactionListener?.();
@@ -468,7 +478,61 @@ export default function (pi: ExtensionAPI) {
       await close();
       throw error;
     }
+    if (context.mode === "tui")
+      removeTerminalInput = context.ui.onTerminalInput((data) => {
+        if (
+          !matchesKey(data, "escape") ||
+          blockingPrompt ||
+          agentsOpen ||
+          goalPanel ||
+          !terminalUi ||
+          terminalUi.hasOverlay()
+        )
+          return;
+        const editor = terminalUi.getFocusedComponent?.();
+        if (!(editor instanceof Editor) || editor.isShowingAutocomplete())
+          return;
+        const owner = kernel;
+        const mission = owner?.store.mission();
+        if (
+          !owner ||
+          !mission ||
+          ["complete", "stopped"].includes(mission.status)
+        )
+          return;
+        const tasks = owner.store
+          .missionTasks(mission.id)
+          .filter((task) => !terminal(task));
+        if (mission.humanPaused && !tasks.length && ctx?.isIdle()) return;
+        pi.events.emit("mission-control:interrupt", { reason: "User Escape" });
+        void owner
+          .interruptByUser()
+          .then(() => {
+            if (kernel !== owner) return;
+            const unknown = owner.store
+              .missionTasks(mission.id)
+              .filter((task) => task.processState === "unknown").length;
+            context.ui.notify(
+              unknown
+                ? `已中断并暂停；${unknown}项进程状态待核对，成果与成员已保留。`
+                : "已中断主对话与当前任务树；目标、成果和成员已保留，等待明确继续。",
+              unknown ? "warning" : "info",
+            );
+          })
+          .catch((error) => {
+            if (kernel === owner)
+              context.ui.notify(`中断未完全确认：${String(error)}`, "error");
+          });
+        // Preserve Pi's native Escape path, including restoring queued input.
+        return undefined;
+      });
     refresh();
+  });
+  pi.on("ui_prompt_start", () => {
+    blockingPrompt = true;
+  });
+  pi.on("ui_prompt_end", () => {
+    blockingPrompt = false;
   });
   pi.on("session_shutdown", async () => {
     await close();

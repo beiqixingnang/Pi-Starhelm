@@ -18,11 +18,19 @@ const {
   DefaultResourceLoader,
   SessionManager,
   SettingsManager,
+  CustomEditor,
 } = await import(pathToFileURL(path.join(hostDir, "dist/index.js")));
 const { exportSessionToHtml } = await import(
   pathToFileURL(path.join(hostDir, "dist/core/export-html/index.js"))
 );
-const { initTheme, theme: piTheme } = await import(
+const { KeybindingsManager } = await import(
+  pathToFileURL(path.join(hostDir, "dist/core/keybindings.js"))
+);
+const {
+  initTheme,
+  theme: piTheme,
+  getEditorTheme,
+} = await import(
   pathToFileURL(path.join(hostDir, "dist/modes/interactive/theme/theme.js"))
 );
 const fixture = path.join(root, "tests/v2/offline-provider.ts");
@@ -173,6 +181,273 @@ async function until(fn, timeout = 25000) {
   }
   throw new Error("Timed out waiting for real Pi integration");
 }
+
+// Route raw input through the plugin and then the real native editor. The
+// separate PTY regression sends physical Escape bytes to the installed Pi TUI.
+async function interactiveKeys(h) {
+  initTheme("dark", false);
+  const listeners = new Set();
+  let focused,
+    component,
+    overlay = false,
+    widgetReady = false;
+  const tui = {
+    requestRender() {},
+    hasOverlay: () => overlay,
+    getFocusedComponent: () => focused,
+  };
+  const keys = KeybindingsManager.create(process.env.PI_CODING_AGENT_DIR);
+  const editor = new CustomEditor(tui, getEditorTheme(), keys);
+  editor.onEscape = () => {
+    if (!h.session.isIdle) void h.session.abort();
+  };
+  focused = editor;
+  const runner = h.session.extensionRunner;
+  await h.session.bindExtensions({
+    mode: "tui",
+    onError: (error) => h.errors.push(error),
+    uiContext: {
+      ...runner.getUIContext(),
+      onTerminalInput(handler) {
+        listeners.add(handler);
+        return () => listeners.delete(handler);
+      },
+      setWidget(_key, factory) {
+        if (typeof factory === "function") {
+          factory(tui, piTheme);
+          widgetReady = true;
+        }
+      },
+      custom(factory) {
+        return new Promise((resolve) => {
+          component = factory(tui, piTheme, keys, (result) => {
+            focused = editor;
+            resolve(result);
+          });
+          focused = component;
+        });
+      },
+    },
+  });
+  await h.session.reload();
+  await until(() => listeners.size === 1 && widgetReady);
+  return {
+    editor,
+    listeners,
+    get component() {
+      return component;
+    },
+    focus(value) {
+      focused = value;
+    },
+    overlay(value) {
+      overlay = value;
+    },
+    async press(data = "\x1b") {
+      for (const listener of listeners) if (listener(data)?.consume) return;
+      focused?.handleInput?.(data);
+      await new Promise(setImmediate);
+    },
+  };
+}
+
+test(
+  "native editor Escape cancels a managed descendant tree and keeps the goal paused through reload",
+  { timeout: 20000 },
+  () =>
+    harness(async (h) => {
+      const input = await interactiveKeys(h);
+      await h.session.prompt(
+        'V2_TEST:{"op":"answer","text":"READY","noRepeatWake":true}',
+      );
+      await h.tool("goal_start", {
+        objective: "Retain this goal after keyboard interruption",
+        criteria: ["Keep saved work"],
+      });
+      for (const name of ["parent", "child"])
+        await h.tool("team_spawn", {
+          name,
+          role: "Interrupt fixture",
+          workspace: { execution: "files" },
+          communication: { allow: name === "parent" ? ["child"] : [] },
+        });
+      await h.tool("team_send", {
+        to: "parent",
+        message: 'V2_TEST:{"op":"delegate","to":"child","child":{"op":"hang"}}',
+      });
+      await until(async () => {
+        const state = await h.snapshot();
+        return (
+          state.tasks.some(
+            (t) => t.member === "parent" && t.state === "waiting",
+          ) &&
+          state.tasks.some((t) => t.member === "child" && t.state === "running")
+        );
+      });
+      const before = await h.snapshot();
+      const running = h.session.prompt('V2_TEST:{"op":"hang"}');
+      await until(() => h.session.isStreaming);
+      await input.press();
+      await running;
+      await until(async () =>
+        (await h.snapshot()).tasks.every(
+          (t) => t.state === "cancelled" && t.processState === "stopped",
+        ),
+      );
+      const paused = await h.snapshot();
+      assert.equal(paused.mission.id, before.mission.id);
+      assert.equal(paused.mission.status, "paused");
+      assert.equal(paused.mission.pauseSource, "user");
+      assert.equal(paused.mission.archivedAt, undefined);
+      assert.deepEqual(
+        paused.members.map((m) => m.id),
+        before.members.map((m) => m.id),
+      );
+      assert.equal(paused.nextReportAt, before.nextReportAt);
+      assert.equal(paused.recovery, undefined);
+      await h.session.reload();
+      assert.equal(
+        input.listeners.size,
+        1,
+        "reload must replace, not duplicate the raw Escape handler",
+      );
+      assert.equal((await h.snapshot()).mission.status, "paused");
+      assert.equal((await h.snapshot()).tasks.length, before.tasks.length);
+    }),
+);
+
+test(
+  "Escape while the lead is idle terminates a real host command and its managed grandchild",
+  { timeout: 30000 },
+  () =>
+    harness(async (h) => {
+      const input = await interactiveKeys(h);
+      await h.session.prompt(
+        'V2_TEST:{"op":"answer","text":"READY","noRepeatWake":true}',
+      );
+      await h.tool("mission_notifications", {
+        action: "set",
+        taskSuccess: false,
+        taskFailure: false,
+      });
+      const ready = path.join(h.cwd, "escape-grandchild.json"),
+        script = path.join(h.cwd, "escape-command.cjs");
+      await fs.writeFile(
+        script,
+        `const fs=require('node:fs'),cp=require('node:child_process');const child=cp.spawn(process.execPath,['-e','setInterval(()=>{},1000)'],{stdio:'ignore'});fs.writeFileSync(${JSON.stringify(ready)},JSON.stringify({parent:process.pid,child:child.pid}));setInterval(()=>{},1000);`,
+      );
+      await h.tool("team_spawn", {
+        name: "command-worker",
+        role: "Managed process owner",
+        workspace: { root: h.cwd, access: "read-write", execution: "host" },
+      });
+      const command =
+        process.platform === "win32"
+          ? `& '${process.execPath.replaceAll("'", "''")}' '${script.replaceAll("'", "''")}'`
+          : `"${process.execPath}" "${script}"`;
+      await h.tool("team_send", {
+        to: "command-worker",
+        message:
+          "V2_TEST:" +
+          JSON.stringify({
+            op: "tool",
+            name: process.platform === "win32" ? "powershell" : "bash",
+            args: { command },
+          }),
+      });
+      await until(() => fsSync.existsSync(ready));
+      const pids = JSON.parse(await fs.readFile(ready, "utf8"));
+      assert.equal(h.session.isIdle, true);
+      await input.press();
+      await input.press();
+      const alive = (pid) => {
+        try {
+          process.kill(pid, 0);
+          return true;
+        } catch {
+          return false;
+        }
+      };
+      await until(() => !alive(pids.parent) && !alive(pids.child), 5000);
+      await until(async () =>
+        (await h.snapshot()).tasks.every(
+          (task) =>
+            task.state === "cancelled" && task.processState === "stopped",
+        ),
+      );
+      assert.equal((await h.snapshot()).mission.status, "paused");
+      assert.equal((await h.snapshot()).members.length, 1);
+    }),
+);
+
+test(
+  "Escape returns from member panels, native selectors and autocomplete without cancelling live work",
+  { timeout: 20000 },
+  () =>
+    harness(async (h) => {
+      const input = await interactiveKeys(h);
+      await h.session.prompt(
+        'V2_TEST:{"op":"answer","text":"READY","noRepeatWake":true}',
+      );
+      await h.tool("team_spawn", {
+        name: "panel-worker",
+        role: "Keep working while user browses",
+        workspace: { execution: "files" },
+      });
+      const sent = JSON.parse(
+        (
+          await h.tool("team_send", {
+            to: "panel-worker",
+            message: 'V2_TEST:{"op":"hang"}',
+          })
+        ).content[0].text,
+      );
+      await until(async () =>
+        (await h.snapshot()).tasks.some(
+          (task) => task.id === sent.taskId && task.state === "running",
+        ),
+      );
+      const opening = h.session.prompt("/agents panel-worker");
+      await until(() =>
+        input.component?.render(120).join("\n").includes("panel-worker"),
+      );
+      await input.press();
+      await input.press();
+      await opening;
+      assert.equal(
+        (await h.snapshot()).tasks.find((task) => task.id === sent.taskId)
+          .state,
+        "running",
+      );
+      assert.equal((await h.snapshot()).held, false);
+      input.focus({
+        handleInput() {
+          input.focus(input.editor);
+        },
+      });
+      await input.press();
+      input.overlay(true);
+      await input.press();
+      input.overlay(false);
+      const autocomplete = input.editor.isShowingAutocomplete;
+      input.editor.isShowingAutocomplete = () => true;
+      await input.press();
+      input.editor.isShowingAutocomplete = autocomplete;
+      assert.equal(
+        (await h.snapshot()).tasks.find((task) => task.id === sent.taskId)
+          .state,
+        "running",
+      );
+      assert.equal((await h.snapshot()).held, false);
+      await input.press();
+      await until(
+        async () =>
+          (await h.snapshot()).tasks.find((task) => task.id === sent.taskId)
+            .state === "cancelled",
+      );
+      assert.equal((await h.snapshot()).mission.status, "paused");
+    }),
+);
 
 test(
   "real model configures independent notification flags and exact goal levels across reload",
