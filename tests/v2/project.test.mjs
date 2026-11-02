@@ -1334,11 +1334,16 @@ test(
         assert.equal(status.lastFailure.code, "EBUSY");
         assert.equal(status.lastFailure.rolledBack, true);
         assert.equal(status.lastFailure.outcome, "not-applied");
-        assert.equal(status.locks.supported, true);
+        assert.equal(
+          status.locks.supported,
+          true,
+          JSON.stringify(status.locks),
+        );
         assert.ok(
           status.locks.holders.some(
             (holder) => holder.pid === blocker.pid && holder.cwd === h.source,
           ),
+          JSON.stringify(status.locks),
         );
         assert.equal(
           blocker.exitCode,

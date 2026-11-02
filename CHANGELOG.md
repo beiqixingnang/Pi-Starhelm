@@ -1,3 +1,9 @@
+# 2.16.1 — reliable Windows directory-lock diagnostics (2026-11-02)
+
+- Enumerate process IDs, parent IDs and executable names with the native Toolhelp process snapshot instead of starting a CIM/WMI provider. Retain the existing read-only, filtered current-directory inspection and non-exhaustive result contract.
+- Allow a bounded 15-second budget for cold PowerShell/.NET startup and distinguish cancellation, timeout and helper exit failures. Keep the real external-directory-lock, rollback and retry checks enabled on Windows.
+- Cover a real Unicode descendant directory holder with CIM deliberately unavailable, exact path boundaries and cancellation that leaves the foreign directory owner alive; include probe details in CI assertion failures.
+
 # 2.16.0 — Pi Starhelm and activity-prioritized bottom status (2026-11-02)
 
 - Rename the package to `pi-starhelm` and the current public branding to Pi Starhelm. Point repository, homepage and issue metadata to `beiqixingnang/Pi-Starhelm`; retain local directories, extension paths, commands, data namespaces and persisted conversation identities.

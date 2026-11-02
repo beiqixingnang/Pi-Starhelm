@@ -6,6 +6,9 @@ import path from "node:path";
 import os from "node:os";
 import { execFile } from "node:child_process";
 
+// Includes cold Windows PowerShell/.NET compilation, not a WMI service startup.
+const diagnosisTimeoutMs = 15000;
+
 export interface WorkspaceHolder {
   pid: number;
   parentPid: number;
@@ -69,7 +72,7 @@ export async function workspaceLocks(
         cwd: os.tmpdir(),
         env,
         windowsHide: true,
-        timeout: 10000,
+        timeout: diagnosisTimeoutMs,
         maxBuffer: 256000,
         encoding: "utf8",
         signal,
@@ -80,7 +83,9 @@ export async function workspaceLocks(
             unavailable(
               signal?.aborted
                 ? "Diagnosis cancelled"
-                : "Windows process-directory query unavailable",
+                : error.killed
+                  ? `Windows process-directory query timed out after ${diagnosisTimeoutMs}ms`
+                  : `Windows process-directory query failed (${error.code ?? "unknown"})`,
             ),
           );
           return;

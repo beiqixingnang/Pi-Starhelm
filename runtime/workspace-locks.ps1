@@ -7,9 +7,52 @@ $request = [Console]::In.ReadToEnd() | ConvertFrom-Json
 # remote memory is modified; inaccessible/unsupported processes are skipped.
 Add-Type -TypeDefinition @'
 using System;
+using System.Collections.Generic;
+using System.ComponentModel;
 using System.Runtime.InteropServices;
 using System.Text;
 public static class MissionWorkspaceCwd {
+    [StructLayout(LayoutKind.Sequential, CharSet = CharSet.Unicode)]
+    private struct ProcessEntry {
+        public uint Size, Usage, ProcessId;
+        public UIntPtr DefaultHeapId;
+        public uint ModuleId, Threads, ParentProcessId;
+        public int BasePriority;
+        public uint Flags;
+        [MarshalAs(UnmanagedType.ByValTStr, SizeConst = 260)]
+        public string ExeFile;
+    }
+    public sealed class ProcessInfo {
+        public int ProcessId, ParentProcessId;
+        public string Name;
+    }
+    [DllImport("kernel32.dll", SetLastError=true)]
+    private static extern IntPtr CreateToolhelp32Snapshot(uint flags, uint pid);
+    [DllImport("kernel32.dll", EntryPoint="Process32FirstW", CharSet=CharSet.Unicode, SetLastError=true)]
+    private static extern bool Process32First(IntPtr snapshot, ref ProcessEntry entry);
+    [DllImport("kernel32.dll", EntryPoint="Process32NextW", CharSet=CharSet.Unicode, SetLastError=true)]
+    private static extern bool Process32Next(IntPtr snapshot, ref ProcessEntry entry);
+    // Native process metadata avoids starting a CIM/WMI provider in a cold runner.
+    public static List<ProcessInfo> Processes() {
+        IntPtr snapshot = CreateToolhelp32Snapshot(0x2, 0); // TH32CS_SNAPPROCESS only
+        if (snapshot == new IntPtr(-1)) throw new Win32Exception(Marshal.GetLastWin32Error());
+        try {
+            var processes = new List<ProcessInfo>();
+            var entry = new ProcessEntry();
+            entry.Size = (uint)Marshal.SizeOf(typeof(ProcessEntry));
+            if (!Process32First(snapshot, ref entry)) throw new Win32Exception(Marshal.GetLastWin32Error());
+            do {
+                processes.Add(new ProcessInfo {
+                    ProcessId = (int)entry.ProcessId,
+                    ParentProcessId = (int)entry.ParentProcessId,
+                    Name = entry.ExeFile
+                });
+            } while (Process32Next(snapshot, ref entry));
+            int error = Marshal.GetLastWin32Error();
+            if (error != 18) throw new Win32Exception(error); // ERROR_NO_MORE_FILES
+            return processes;
+        } finally { CloseHandle(snapshot); }
+    }
     [StructLayout(LayoutKind.Sequential)]
     private struct BasicInfo {
         public IntPtr Reserved1, Peb, Reserved2a, Reserved2b, Pid, Reserved3;
@@ -55,7 +98,7 @@ $root = [IO.Path]::GetFullPath([string]$request.root).TrimEnd('\')
 $names = @('node.exe', 'pwsh.exe', 'powershell.exe', 'cmd.exe', 'Code.exe', 'Lingma.exe', 'WindowsTerminal.exe', 'OpenConsole.exe', 'git.exe', 'bash.exe', 'python.exe', 'python3.exe', 'devenv.exe', 'clangd.exe', 'rust-analyzer.exe')
 $holders = @()
 $inspected = 0
-foreach ($process in Get-CimInstance Win32_Process) {
+foreach ($process in [MissionWorkspaceCwd]::Processes()) {
     if ($process.ProcessId -eq $PID -or $process.ProcessId -eq $request.leadPid -or $names -notcontains $process.Name) { continue }
     $cwd = [MissionWorkspaceCwd]::Directory([int]$process.ProcessId)
     if (-not $cwd) { continue }
