@@ -9,7 +9,7 @@ const {loadExtensions,createExtensionRuntime}=await import(pathToFileURL(path.jo
 const {createEventBus}=await import(pathToFileURL(path.join(hostDir,'dist/core/event-bus.js')));
 const terminal={columns:180,rows:42,kittyProtocolActive:false,start(){},stop(){},write(){},hideCursor(){},showCursor(){},clearLine(){},clearFromCursor(){},clearScreen(){},setTitle(){},setProgress(){},setProgramStatus(){},moveBy(){},async drainInput(){}};
 const tui=new TuiAltScreen(terminal,false,undefined,{mouse:false}),widget=new Container();
-const document=new Text('Pi Mission Control — 界面演示（测试数据）\n\n主 AI：正在协调 CPU/GPU 两组任务。\n\nCPU 构建员正在核对接口，CPU 监督员等待审阅结果。\nGPU 构建员已生成说明，GPU 监督员正在检查。\n\nEnter：插话，在当前响应或工具完成后优先处理\nCtrl+Q：在任务结束后追加\nEsc：全局停止，保留成员身份与历史',0,0);
+const document=new Text('Pi Starhelm — 界面演示（测试数据）\n\n主 AI：正在协调 CPU/GPU 两组任务。\n\nCPU 构建员正在核对接口，CPU 监督员等待审阅结果。\nGPU 构建员已生成说明，GPU 监督员正在检查。\n\nEnter：插话，在当前响应或工具完成后优先处理\nCtrl+Q：在任务结束后追加\nEsc：全局停止，保留成员身份与历史',0,0);
 const original=new VStack([{component:new ScrollView(document,{primary:true,follow:'end'}),basis:0,grow:1},{component:widget},{component:new Text('> 尚未发送的主对话草稿',0,0)}]);tui.setLayoutRoot(original);
 const entries=[{type:'custom',customType:'goal-state',data:{status:'running',objective:'核对 CPU/GPU 文档和接口，收集监督员验收意见',criteria:['CPU 接口检查完成','GPU 文档审阅完成']}}];
 const bus=createEventBus(),runtime=createExtensionRuntime();const loaded=await loadExtensions([path.join(root,'extensions/agent-monitor/index.ts')],root,bus,runtime);if(loaded.errors.length)throw new Error(JSON.stringify(loaded.errors));const extension=loaded.extensions[0];

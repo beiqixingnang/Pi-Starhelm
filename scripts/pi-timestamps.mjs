@@ -60,7 +60,7 @@ if (mode === "status") {
   );
 } else if (!marked.length) {
   console.log(
-    "Pi already has no Mission Control timestamp patch; no files changed.",
+    "Pi already has no Pi Starhelm timestamp patch; no files changed.",
   );
 } else {
   if (

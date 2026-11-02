@@ -420,6 +420,133 @@ test("public widget layout remains bounded at narrow/wide CJK widths and has sta
   }
 });
 
+test("bottom widget prioritizes live and actionable members, counts hidden states and leaves the full roster stable", () =>
+  withRoster(async ({ kernel, add }) => {
+    kernel.setGoal("Display a busy team without losing its active members");
+    const task = (name, state, extra = {}) => {
+      const member = add(name);
+      kernel.store.putTask({
+        id: "display-" + member.id,
+        missionId: kernel.store.mission().id,
+        memberId: member.id,
+        member: name,
+        rootId: member.id,
+        state,
+        epoch: 1,
+        phase: "work",
+        inputPath: "unused",
+        createdAt: 1000,
+        updatedAt: 1000,
+        timeoutMs: 0,
+        processState: state === "running" ? "running" : "stopped",
+        reviewDeliveryIds: [],
+        ...extra,
+      });
+      return member;
+    };
+    task("a-completed", "completed");
+    const runB = task("z-running-b", "running");
+    task("z-running-a", "running");
+    task("b-failed", "failed");
+    task("c-blocked", "waiting", {
+      blockedReason: "Need an explicit scope decision",
+    });
+    task("d-queued", "queued", { processState: "not-started" });
+    task("e-waiting", "waiting");
+    const alphabetical = kernel.store.members().map((member) => member.id);
+    const expanded = board(kernel, 180, true).join("\n");
+    const ordered = [
+      "z-running-a",
+      "z-running-b",
+      "b-failed",
+      "c-blocked",
+      "d-queued",
+      "e-waiting",
+      "a-completed",
+    ];
+    for (let i = 1; i < ordered.length; i++)
+      assert.ok(
+        expanded.indexOf(ordered[i - 1]) < expanded.indexOf(ordered[i]),
+      );
+    const compact = board(kernel, 180, false, undefined, 42).join("\n");
+    assert.match(compact, /z-running-a/);
+    assert.match(compact, /z-running-b/);
+    assert.match(compact, /1等待/);
+    assert.match(compact, /1完成/);
+    assert.match(compact, /4待命/);
+    assert.doesNotMatch(compact, /cpu-executor/);
+    kernel.store.set(`activity:${runB.id}`, { tool: "read", at: 999999 });
+    const after = board(kernel, 180, true).join("\n");
+    assert.ok(after.indexOf("z-running-a") < after.indexOf("z-running-b"));
+    assert.deepEqual(
+      teamRows(kernel.snapshot()).map((row) => row.memberId),
+      alphabetical,
+    );
+  }));
+
+test("short and crowded bottom layouts reserve a live member row and summarize hidden actionable work", () =>
+  withRoster(async ({ kernel, members }) => {
+    kernel.setGoal("Many main goals");
+    kernel.planGoals(
+      Array.from({ length: 8 }, (_, i) => ({
+        objective: "Additional main " + i,
+        criteria: ["Verified"],
+      })),
+    );
+    const put = (member, state, extra = {}) =>
+      kernel.store.putTask({
+        id: "crowded-" + member.id,
+        missionId: kernel.store.mission().id,
+        memberId: member.id,
+        member: member.name,
+        rootId: member.id,
+        state,
+        epoch: 1,
+        phase: "work",
+        inputPath: "unused",
+        createdAt: 1,
+        updatedAt: 1,
+        timeoutMs: 0,
+        processState: state === "running" ? "running" : "stopped",
+        reviewDeliveryIds: [],
+        ...extra,
+      });
+    put(members[3], "running");
+    put(members[0], "failed");
+    put(members[1], "interrupted", { processState: "unknown" });
+    put(members[2], "queued", { processState: "not-started" });
+    for (const width of [20, 50, 80, 160]) {
+      for (const height of [12, 15, 21, 30, 42]) {
+        const lines = board(kernel, width, false, undefined, height);
+        assert.ok(
+          lines.length <= Math.max(4, Math.min(10, Math.floor(height / 3))),
+        );
+        assert.ok(lines.every((line) => visibleWidth(line) <= width));
+        assert.match(
+          lines.join("\n"),
+          width < 50 ? /gpu-/ : /gpu-supervisor/,
+          `active row at ${width}x${height}`,
+        );
+      }
+    }
+    const crowded = board(kernel, 160, false, undefined, 42).join("\n");
+    assert.match(crowded, /2需处理/);
+    assert.match(crowded, /1排队/);
+    assert.match(crowded, /另有 \d+个目标/);
+    put(members[2], "running");
+    assert.match(
+      board(kernel, 160, false, undefined, 42).join("\n"),
+      /1执行中/,
+    );
+    put(members[2], "completed");
+    put(members[3], "completed");
+    const changed = board(kernel, 160, false, undefined, 42).join("\n");
+    assert.match(changed, /cpu-executor/);
+    assert.doesNotMatch(changed, /gpu-supervisor/);
+    assert.match(changed, /2完成/);
+    assert.equal(teamRows(kernel.snapshot())[0].memberId, members[0].id);
+  }));
+
 test("member viewer supports selection, expansion, paging, follow pause, history and safe return", async () => {
   const dir = fs.mkdtempSync(path.join(os.tmpdir(), "mc-v2-panel-"));
   let wakes = 0,

@@ -46,3 +46,30 @@ test("README documents the current prompt boundary instead of an old tool-count 
   assert.match(readme, /提示词与工作流边界/);
   assert.doesNotMatch(readme, /当前版本 \*\*2\.6\.1\*\*/);
 });
+
+test("Starhelm package branding matches its renamed repository without moving persistent runtime paths", () => {
+  const manifest = JSON.parse(read("package.json"));
+  const lock = JSON.parse(read("package-lock.json"));
+  assert.equal(manifest.name, "pi-starhelm");
+  assert.equal(lock.name, manifest.name);
+  assert.equal(lock.packages[""].name, manifest.name);
+  assert.equal(lock.version, manifest.version);
+  assert.equal(lock.packages[""].version, manifest.version);
+  assert.equal(
+    manifest.repository.url,
+    "https://github.com/beiqixingnang/Pi-Starhelm.git",
+  );
+  assert.equal(
+    manifest.homepage,
+    "https://github.com/beiqixingnang/Pi-Starhelm",
+  );
+  assert.equal(
+    manifest.bugs.url,
+    "https://github.com/beiqixingnang/Pi-Starhelm/issues",
+  );
+  assert.deepEqual(manifest.pi.extensions, [
+    "./extensions/mission-control/index.ts",
+    "./extensions/mission-control/compaction.ts",
+  ]);
+  assert.ok(read("README.md").startsWith("# Pi Starhelm"));
+});

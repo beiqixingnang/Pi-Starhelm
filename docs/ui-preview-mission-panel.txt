@@ -1,4 +1,4 @@
-=== 目标 / 定时任务 / 子智能体状态表 · Pi隔离预览 (120×30) ===
+=== Pi Starhelm · 执行与异常优先 · Pi隔离预览 (120×30) ===
 
  继续推进CPU/GPU任务，保留图形输出，交付后由监督员复核。
 
@@ -20,14 +20,14 @@
 
 类别     │ 名称 / 内容                                                     │ 状态           │ 时间 / 进展
 ────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────
-目标     │ 完成CPU/GPU辅助仓重写，保留图形输出并通过测试                   │ 推进中         │ 活动 0秒 · 无时间上限
+目标     │ 完成CPU/GPU辅助仓重写，保留图形输出并通过测试                   │ 推进中         │ 二级0/0 三级0/0
 定时任务 │ 阶段复核                                                        │ 一次提醒       │ 12分后
 定时任务 │ 进度汇报                                                        │ 每1小时0分     │ 60分后
 子智能体 │ cpu-executor                                                    │ 执行中         │ powershell
-子智能体 │ cpu-reviewer                                                    │ 等待下游       │ 复核
-子智能体 │ gpu-executor                                                    │ 完成           │
 子智能体 │ gpu-reviewer                                                    │ 失败           │
-/mission 查看 · /agents 成员对话
+子智能体 │ cpu-reviewer                                                    │ 等待下游       │ 复核
+子智能体 │ a-idle-1                                                        │ 待命           │
+另有 2待命、1完成 · /mission goals 目标详情 · /agents 成员对话
 › 尚未发送的主对话草稿
 
 === 窄屏按类别堆叠 · Pi渲染器隔离预览 (70×24) ===
@@ -47,21 +47,24 @@
  Took 4.5s
 
 目标 · 推进中 · 完成CPU/GPU辅助仓重写，保留图形输出并通过测试
+二级0/0 三级0/0 已验收
 定时 · 2项 · 12分后 阶段复核
-成员 · 4名 · 执行 1 · 等待 1
+成员 · 7名 · 执行 1 · 等待 1
 cpu-executor                                              执行中
-cpu-reviewer                                              等待下游
-gpu-executor                                              完成
 gpu-reviewer                                              失败
-/mission 查看 · /agents 对话
+cpu-reviewer                                              等待下游
+另有 3待命、1完成 · 另有 1项提醒 · /mission goals 目标详情 · /agent...
 › 尚未发送的主对话草稿
 
 === 团队工作台 · Pi渲染器隔离预览 (120×32) ===
 AGENTS / TEAM STATUS
-推进中 · 成员 4 · 执行中 1 · 等待 1
+推进中 · 成员 7 · 执行中 1 · 等待 1
 目标：完成CPU/GPU辅助仓重写，保留图形输出并通过测试
 [子智能体]  目标 / 验收  定时提醒
-▶ ● cpu-executor · 执行中 [host] · powershell
+▶ ○ a-idle-1 · 待命 [host]
+  ○ a-idle-2 · 待命 [host]
+  ○ a-idle-3 · 待命 [host]
+  ● cpu-executor · 执行中 [host] · powershell
   ○ cpu-reviewer · 等待下游 · 复核 [host]
   ✓ gpu-executor · 完成 [host]
   ! gpu-reviewer · 失败 [host]
@@ -87,37 +90,34 @@ AGENTS / TEAM STATUS
 
 
 
-
-
-
 === 成员对话与动作底色 · Pi渲染器隔离预览 (120×44) ===
 cpu-executor · CPU执行员
 执行中 · 跟随最新 · 会话 1/1
-  用户任务  12:24:58
+  用户任务  17:24:32
     │ 核对寄存器复位行为，保留已有接口并补充测试。
 
-  成员回复  12:25:08
+  成员回复  17:24:42
     已核对接口约束。接下来修正复位值，再执行边界测试。
 
     - 保留现有图形接口
     - 用实际测试结果提交监督员复核
 
-  编辑文件 · src/register.ts  12:25:27 · 耗时 1.2秒
+  编辑文件 · src/register.ts  17:25:01 · 耗时 1.2秒
     src/register.ts
     - const reset = 1;
     + const reset = 0;
 
-  工具返回 · edit  12:25:28 · 耗时 1.2秒
+  工具返回 · edit  17:25:02 · 耗时 1.2秒
     Updated src/register.ts
 
-  执行命令 · powershell  12:25:44 · 耗时 4.5秒
+  执行命令 · powershell  17:25:18 · 耗时 4.5秒
     npm test -- --filter register
 
-  工具返回 · powershell  12:25:48 · 耗时 4.5秒
+  工具返回 · powershell  17:25:22 · 耗时 4.5秒
     PASS register-interface
     2 tests passed
 
-▶ 执行命令 · powershell  12:25:58
+▶ 执行命令 · powershell  17:25:32
     npm run verify:boundaries
 
 ↑↓ 选择 · Enter 展开 · m 发消息 · c 复制 · f 跟随 · Home/PgUp 更早 · End 最新 · [ ] 历史
@@ -139,27 +139,27 @@ Esc 返回团队 · q 退出工作台 · 当前页面不使用右侧分栏
 === 编辑内容展开 · Pi渲染器隔离预览 (100×32) ===
 cpu-executor · CPU执行员
 执行中 · 暂停跟随 · 会话 1/1
-  用户任务  12:24:58
+  用户任务  17:24:32
     │ 核对寄存器复位行为，保留已有接口并补充测试。
 
-  成员回复  12:25:08
+  成员回复  17:24:42
     已核对接口约束。接下来修正复位值，再执行边界测试。
 
     - 保留现有图形接口
     - 用实际测试结果提交监督员复核
 
-▶ 编辑文件 · src/register.ts  [展开]  12:25:27 · 耗时 1.2秒
+▶ 编辑文件 · src/register.ts  [展开]  17:25:01 · 耗时 1.2秒
     src/register.ts
     - const reset = 1;
     + const reset = 0;
 
-  工具返回 · edit  12:25:28 · 耗时 1.2秒
+  工具返回 · edit  17:25:02 · 耗时 1.2秒
     Updated src/register.ts
 
-  执行命令 · powershell  12:25:44 · 耗时 4.5秒
+  执行命令 · powershell  17:25:18 · 耗时 4.5秒
     npm test -- --filter register
 
-  工具返回 · powershell  12:25:48 · 耗时 4.5秒
+  工具返回 · powershell  17:25:22 · 耗时 4.5秒
     PASS register-interface
 ↑↓ 选择 · Enter 展开 · m 发消息 · c 复制 · f 跟随 · Home/PgUp 更早 · End 最新 · [ ] 历史
 Esc 返回团队 · q 退出工作台 · 当前页面不使用右侧分栏
@@ -173,31 +173,31 @@ Esc 返回团队 · q 退出工作台 · 当前页面不使用右侧分栏
 === 纯插件主对话时间线 · 原生Pi保持原样 (120×44) ===
 主会话 · 公开时间线
 磁盘公开记录，非模型上下文 · 跟随最新
-  用户任务  12:24:58
+  用户任务  17:24:32
     │ 核对寄存器复位行为，保留已有接口并补充测试。
 
-  主会话回复  12:25:08
+  主会话回复  17:24:42
     已核对接口约束。接下来修正复位值，再执行边界测试。
 
     - 保留现有图形接口
     - 用实际测试结果提交监督员复核
 
-  编辑文件 · src/register.ts  [展开]  12:25:27 · 耗时 1.2秒
+  编辑文件 · src/register.ts  [展开]  17:25:01 · 耗时 1.2秒
     src/register.ts
     - const reset = 1;
     + const reset = 0;
 
-  工具返回 · edit  12:25:28 · 耗时 1.2秒
+  工具返回 · edit  17:25:02 · 耗时 1.2秒
     Updated src/register.ts
 
-  执行命令 · powershell  12:25:44 · 耗时 4.5秒
+  执行命令 · powershell  17:25:18 · 耗时 4.5秒
     npm test -- --filter register
 
-  工具返回 · powershell  12:25:48 · 耗时 4.5秒
+  工具返回 · powershell  17:25:22 · 耗时 4.5秒
     PASS register-interface
     2 tests passed
 
-▶ 执行命令 · powershell  12:25:58
+▶ 执行命令 · powershell  17:25:32
     npm run verify:boundaries
 
 ↑↓ 选择 · Enter 展开 · m 返回输入 · c 复制 · f 跟随 · Home/PgUp 更早 · End 最新

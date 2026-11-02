@@ -45,7 +45,7 @@ export class Store {
       }
       if (alive)
         throw new Error(
-          "This Pi session already has a Mission Control owner. Close the other session before attaching.",
+          "This Pi session already has a Pi Starhelm owner. Close the other session before attaching.",
         );
       fs.unlinkSync(this.lock);
       const fd = fs.openSync(this.lock, "wx", 0o600);
@@ -85,7 +85,7 @@ export class Store {
       `);
       const version = this.get<number>("schema");
       if (version !== undefined && version !== 2)
-        throw new Error(`Unsupported Mission Control state schema: ${version}`);
+        throw new Error(`Unsupported Pi Starhelm state schema: ${version}`);
       this.set("schema", 2);
       fs.mkdirSync(path.join(this.directory, "artifacts"), {
         recursive: true,

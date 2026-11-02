@@ -1,6 +1,6 @@
 # Contributing
 
-Pi Mission Control is a small, session-local extension package for Pi. Contributions should preserve Pi's extension model and should not require a fork of Pi or changes to a user's global Pi configuration.
+Pi Starhelm is a small, session-local extension package for Pi. Contributions should preserve Pi's extension model and should not require a fork of Pi or changes to a user's global Pi configuration.
 
 Do not patch the installed Pi program, replace native component prototypes, or use a private rendering bridge. Message times belong in plugin-owned views. The withdrawn 2.0.7 adapter has only a checksum-guarded recovery utility; do not restore an installation capability. See docs/design/mission-control-v2/TIMESTAMPS.md.
 

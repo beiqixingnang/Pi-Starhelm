@@ -1,3 +1,9 @@
+# 2.16.0 — Pi Starhelm and activity-prioritized bottom status (2026-11-02)
+
+- Rename the package to `pi-starhelm` and the current public branding to Pi Starhelm. Point repository, homepage and issue metadata to `beiqixingnang/Pi-Starhelm`; retain local directories, extension paths, commands, data namespaces and persisted conversation identities.
+- Prioritize running and actionable members in the bottom widget, followed by queued/waiting and settled/idle members. Keep name order within each priority and the full member roster; show hidden state counts and reserve a member row in crowded or short layouts.
+- Exercise real Pi member transitions, original-session reload across the package rename, narrow/wide rendering, hidden-member counts, and existing archive/recovery/transfer contracts. Skills remain unchanged.
+
 # 2.15.0 — independent execution-batch wakeups (2026-11-02)
 
 - Add opt-in `mission_notifications.taskBatchSettled`, independent of individual success/failure and goal-level notifications. Track the current mission's execution round, queued dependencies, descendants and parent review; wake once after actual settlement with outcome counts, without accepting goals.

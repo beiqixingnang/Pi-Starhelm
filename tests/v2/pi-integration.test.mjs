@@ -2109,7 +2109,7 @@ test(
 );
 
 test(
-  "real Pi reactivates newly added Mission Control tools when an old session is reloaded",
+  "real Pi reactivates newly added Pi Starhelm tools when an old session is reloaded",
   { timeout: 30000 },
   () =>
     harness(async (h) => {
@@ -2840,6 +2840,93 @@ test("invalid or ambiguous delegation is rejected before creating any members or
       assert.equal((await h.snapshot()).tasks.length, 0);
     }
   }));
+
+test(
+  "real Pi bottom widget promotes a working member past idle names and preserves identities after reload",
+  { timeout: 20000 },
+  () =>
+    harness(async (h) => {
+      let widget;
+      initTheme("dark", false);
+      const runner = h.session.extensionRunner;
+      runner.setUIContext(
+        {
+          ...runner.getUIContext(),
+          setWidget(key, content) {
+            if (key === "mission-control" && typeof content === "function")
+              widget = content;
+          },
+        },
+        "tui",
+      );
+      await h.session.prompt(
+        'V2_TEST:{"op":"answer","text":"READY","noRepeatWake":true}',
+      );
+      await h.tool("goal_start", {
+        objective: "Observe active work among idle team members",
+        criteria: ["Read the saved file"],
+      });
+      await h.tool("mission_notifications", {
+        action: "set",
+        taskSuccess: false,
+        taskFailure: false,
+      });
+      const names = [
+        ...Array.from({ length: 8 }, (_, i) => "a-idle-" + i),
+        "z-working",
+      ];
+      for (const name of names)
+        await h.tool("team_spawn", {
+          name,
+          role: "Isolated status fixture",
+          workspace: { execution: "files" },
+        });
+      const identities = (await h.snapshot()).members.map(
+        (member) => member.id,
+      );
+      const file = path.join(h.cwd, "working-receipt.txt");
+      await h.tool("team_send", {
+        to: "z-working",
+        message:
+          "V2_TEST:" +
+          JSON.stringify({
+            op: "tool",
+            name: "fixture_boundary_command",
+            args: { file, delayMs: 3500 },
+          }),
+      });
+      await until(() => fsSync.existsSync(file + ".started") && widget);
+      const render = () =>
+        widget({ requestRender() {} }, piTheme)
+          .render(120)
+          .join("\n");
+      const running = render();
+      assert.match(running, /z-working/);
+      assert.ok(running.indexOf("z-working") < running.indexOf("a-idle-0"));
+      assert.match(running, /4待命/);
+      await until(async () =>
+        (await h.snapshot()).tasks.some(
+          (task) => task.member === "z-working" && task.state === "completed",
+        ),
+      );
+      assert.equal(await fs.readFile(file, "utf8"), "COMMAND_FINISHED");
+      assert.doesNotMatch(render(), /z-working/);
+      assert.match(render(), /1完成/);
+      assert.deepEqual(
+        (await h.snapshot()).members.map((member) => member.name),
+        names,
+      );
+      await h.tool("goal_pause", {
+        reason: "Preserve the real widget fixture through reload",
+      });
+      await h.session.reload();
+      assert.deepEqual(
+        (await h.snapshot()).members.map((member) => member.id),
+        identities,
+      );
+      assert.equal((await h.snapshot()).mission.status, "paused");
+    }),
+);
 
 test(
   "real Pi dashboard opens live member history and returns without aborting the lead or changing work",
@@ -3869,11 +3956,8 @@ test(
         instructions,
         /old claims that only a user slash command/,
       );
-      assert.match(
-        instructions,
-        /Mission Control exposes stateful tools directly/,
-      );
-      assert.match(instructions, /Current Mission Control recovery plan/);
+      assert.match(instructions, /Pi Starhelm exposes stateful tools directly/);
+      assert.match(instructions, /Current Pi Starhelm recovery plan/);
       assert.equal((await h.snapshot()).mission.status, "attention");
       assert.equal(
         (await h.snapshot()).tasks.filter((t) => t.processState === "unknown")

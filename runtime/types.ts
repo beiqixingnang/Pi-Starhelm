@@ -447,7 +447,7 @@ export function resolveSettings(raw: Partial<Settings> = {}): Settings {
     )
       continue;
     if (!Number.isSafeInteger(s[key]) || s[key] < min || s[key] > max)
-      throw new Error(`Invalid Mission Control setting: ${key}`);
+      throw new Error(`Invalid Pi Starhelm setting: ${key}`);
   }
   if (!["host", "sandbox", "files"].includes(s.defaultExecution))
     throw new Error("Invalid defaultExecution");

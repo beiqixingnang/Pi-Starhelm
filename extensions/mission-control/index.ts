@@ -78,9 +78,11 @@ const scopeSchema = Type.Object({
     }),
   ),
 });
-const pluginVersion: string = JSON.parse(
+const pluginManifest = JSON.parse(
   fsSync.readFileSync(new URL("../../package.json", import.meta.url), "utf8"),
-).version;
+);
+const pluginVersion: string = pluginManifest.version;
+const pluginName: string = pluginManifest.name;
 
 const WorkspaceSchema = Type.Object({
   root: optional(Type.String()),
@@ -157,7 +159,7 @@ export default function (pi: ExtensionAPI) {
       new Text(
         options.expanded
           ? cleanText(String(message.content), 18000)
-          : theme.fg("accent", "Mission Control · 团队结果或计划检查已到达") +
+          : theme.fg("accent", "Pi Starhelm · 团队结果或计划检查已到达") +
             "\n" +
             theme.fg(
               "muted",
@@ -217,6 +219,7 @@ export default function (pi: ExtensionAPI) {
   const runtimeIdentity = () => {
     const active = new Set(pi.getActiveTools());
     return {
+      packageName: pluginName,
       version: pluginVersion,
       toolDelivery: "direct model declarations from the host registry",
       registeredMissionTools: missionTools().length,
@@ -228,8 +231,7 @@ export default function (pi: ExtensionAPI) {
     };
   };
   const current = () => {
-    if (!kernel)
-      throw new Error("Mission Control is not attached to a Pi session");
+    if (!kernel) throw new Error("Pi Starhelm is not attached to a Pi session");
     return kernel;
   };
   function modelStatus() {
@@ -483,7 +485,7 @@ export default function (pi: ExtensionAPI) {
     // building this model request, including schema changes to existing tools.
     activateMissionTools();
     event.systemPromptOptions.promptGuidelines.push(
-      `Mission Control ${pluginVersion}: plugin tools are direct host registrations. Use current IDs, revisions, epochs, permissions and recoveryPlan as the runtime contract. Reload does not attest stopped processes; explicit holds remain authoritative.`,
+      `Pi Starhelm ${pluginVersion}: plugin tools are direct host registrations. Use current IDs, revisions, epochs, permissions and recoveryPlan as the runtime contract. Reload does not attest stopped processes; explicit holds remain authoritative.`,
       leadMechanismGuidance,
     );
     const wake =
@@ -2041,8 +2043,8 @@ export default function (pi: ExtensionAPI) {
   );
   tool(
     "mission_capabilities",
-    "Mission Control tool catalog",
-    "List every Mission Control tool from the host registry, its active model visibility and available command counterparts. Tools are declared directly to the lead; no discovery call is required before using them. Optionally filter by toolName and include its schema.",
+    "Pi Starhelm tool catalog",
+    "List every Pi Starhelm tool from the host registry, its active model visibility and available command counterparts. Tools are declared directly to the lead; no discovery call is required before using them. Optionally filter by toolName and include its schema.",
     Type.Object({
       toolName: Type.Optional(Type.String()),
       includeSchemas: Type.Optional(Type.Boolean()),
@@ -2054,7 +2056,7 @@ export default function (pi: ExtensionAPI) {
         ? all.filter((t) => t.name === args.toolName)
         : all;
       if (args.toolName && !selected.length)
-        throw new Error("Unknown Mission Control tool");
+        throw new Error("Unknown Pi Starhelm tool");
       const shown =
         args.includeSchemas && !args.toolName ? selected.slice(0, 5) : selected;
       const m = current().store.mission();
@@ -2351,8 +2353,7 @@ export default function (pi: ExtensionAPI) {
       );
       return;
     }
-    if (agentsOpen)
-      throw new Error("A Mission Control workbench is already open");
+    if (agentsOpen) throw new Error("A Pi Starhelm workbench is already open");
     agentsOpen = true;
     context.ui.setWidget("mission-control", undefined);
     try {

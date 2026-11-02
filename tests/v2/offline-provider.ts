@@ -10,6 +10,9 @@ const textOf = (m: any) =>
         .filter((b: any) => b.type === "text")
         .map((b: any) => b.text)
         .join("\n");
+const runtimeUpdate = (text: string) =>
+  text.startsWith("Pi Starhelm updates.") ||
+  text.startsWith("Mission Control updates.");
 let summaryCalls = 0;
 const requestAttempts = new Map<string, number>();
 let notesCycle: any;
@@ -378,7 +381,7 @@ export default function (pi: ExtensionAPI) {
             JSON.parse(
               marker
                 .slice(
-                  (marker.startsWith("Mission Control updates.")
+                  (runtimeUpdate(marker)
                     ? marker.lastIndexOf("V2_TEST:")
                     : marker.indexOf("V2_TEST:")) + 8,
                 )
@@ -539,10 +542,7 @@ export default function (pi: ExtensionAPI) {
               )
               .at(-1),
             userText = textOf(latestUser);
-          if (
-            command.noRepeatWake &&
-            userText.startsWith("Mission Control updates.")
-          ) {
+          if (command.noRepeatWake && runtimeUpdate(userText)) {
             answer("FIXTURE_UPDATES_OBSERVED");
             stream.push({ type: "start", partial: message });
             stream.push({ type: "done", reason: "stop", message });
@@ -645,7 +645,7 @@ export default function (pi: ExtensionAPI) {
             // A maintenance probe after success is not another fixture fault.
             // Failed commands still retry, including after a reloaded provider.
             if (
-              userText.startsWith("Mission Control updates.") &&
+              runtimeUpdate(userText) &&
               !userText.includes("V2_TEST:") &&
               trace.length &&
               !JSON.parse(trace.at(-1)!).failed
@@ -762,7 +762,7 @@ export default function (pi: ExtensionAPI) {
               last.toolName === "mission_complete"
             )
               answer("V2_WAKE_CONFIRMED");
-            else if (userText.startsWith("Mission Control updates."))
+            else if (runtimeUpdate(userText))
               tool("mission_complete", {
                 evidence: [
                   {

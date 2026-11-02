@@ -93,5 +93,5 @@
     const box=document.getElementById('search-results');if(!box)return;box.innerHTML=`<div class="card-title"><h2>${limit?'至少 ':''}${found.size} 项匹配</h2><small>${limit?'达到显示上限，请缩小关键词':'已完成全部已索引公开正文检索'}</small></div>`;
     for(const [n,hit] of found){if(epoch!==S.searchEpoch)return;const r=await itemAt(n),button=document.createElement('button');button.className='search-result';button.textContent=`${ch(r.member)?.name??r.member} · ${when(r.time)} · #${n}\n${preview(r.body??r.args).slice(0,160)}`;button.onclick=async()=>{await locate(n);const body=[r.body,r.args].find(b=>b?.id===hit.body);if(body&&body.text===undefined)await openBody(body,'搜索匹配正文',hit.part);};box.append(button);}foot();
   }catch(error){main.innerHTML=`<div class="error">${E(error.message)}</div>`;}});
-  document.getElementById('export-time').textContent=when(M.createdAt);document.getElementById('status').textContent=M.status==='complete'?'所选范围已导出':'存在范围提示';document.title='Mission Archive · '+(M.title??M.sessionId??'对话');render();
+  document.getElementById('export-time').textContent=when(M.createdAt);document.getElementById('status').textContent=M.status==='complete'?'所选范围已导出':'存在范围提示';document.title='Starhelm Archive · '+(M.title??M.sessionId??'对话');render();
 })();

@@ -1,8 +1,8 @@
-# Pi Mission Control v2
+# Pi Starhelm v2
 
 非官方Pi插件包。v2将成员任务、消息交付、Goal和调度收敛到一个持久运行核心：**派发任务即自动登记维护，完成唤醒不要求模型先创建Goal或开启监督器**。
 
-当前版本 **2.15.0**。主模型和成员工具由 Pi 宿主 registry 动态暴露，具体可用工具以 `mission_capabilities` 和成员 capability snapshot 为准。插件提供目标、任务、权限、通知、恢复、迁移和 UI 机制；项目工作流偏好应通过外部 skill 注入。支持默认三级目标树、明确文件/批次范围、阶段依赖和逐项证据验收。子智能体默认没有任务硬截止，主模型按实际任务选择时限、工具和工作区；角色名称不再自动缩减权限。主界面简要显示目标及二、三级验收数，`/mission goals`打开详细看板。独立摘要模型支持限流、断流恢复及缓存；上下文还可切换独立笔记模式。正常工具调用不消耗失败重试额度，临时故障冷却后自动续接。TUI负责操作，静态HTML归档用于离线阅读。恢复工具见[工具接口记录](docs/design/mission-control-v2/TOOLS-2026-10-18.md)，测试边界见[验证记录](docs/design/mission-control-v2/VALIDATION.md)。
+当前版本 **2.16.0**。主模型和成员工具由 Pi 宿主 registry 动态暴露，具体可用工具以 `mission_capabilities` 和成员 capability snapshot 为准。插件提供目标、任务、权限、通知、恢复、迁移和 UI 机制；项目工作流偏好应通过外部 skill 注入。支持默认三级目标树、明确文件/批次范围、阶段依赖和逐项证据验收。子智能体默认没有任务硬截止，主模型按实际任务选择时限、工具和工作区；角色名称不再自动缩减权限。主界面简要显示目标及二、三级验收数，`/mission goals`打开详细看板。独立摘要模型支持限流、断流恢复及缓存；上下文还可切换独立笔记模式。正常工具调用不消耗失败重试额度，临时故障冷却后自动续接。TUI负责操作，静态HTML归档用于离线阅读。恢复工具见[工具接口记录](docs/design/mission-control-v2/TOOLS-2026-10-18.md)，测试边界见[验证记录](docs/design/mission-control-v2/VALIDATION.md)。
 
 ## 提示词与工作流边界
 
@@ -15,6 +15,8 @@
 需要 **Node.js 24+、Pi 1.4.0+（1.x）**；当前安装、依赖锁文件、源码快照和 CI 均以 **Pi1.4.0** 为基线，停止维护 1.3 兼容。Pi 1.4.0 升级验证覆盖 Windows / Node24、WSL / Node24 和 WSL 原有 Node22，以及专用会话的同进程 `/reload`；见 [1.4.0 兼容记录](docs/design/mission-control-v2/PI-1.4.0-2026-10-22.md)。此前另做过原生HTML导出、host命令/进程树和本机Podman验证；本轮未运行需镜像的容器用例。离线provider测试不等于真实模型兼容性认证。
 
 ## 安装与切换
+
+项目现名 **Pi Starhelm**，包名为 `pi-starhelm`，远端仓库为 `beiqixingnang/Pi-Starhelm`。已有本地 `pi-mission-control` 目录可以继续使用，不要求改名或重新登记。`mission-control` 数据目录、配置文件、工具命令和会话身份继续保留，已有目标、成员、笔记与历史通过原会话 `/reload` 接续。
 
 ```powershell
 pi install C:/tools/pi-mission-control
@@ -47,6 +49,8 @@ pi install C:/tools/pi-mission-control
 一个长任务如果覆盖同一主目标下多个叶目标，派工时使用`goalIds:[...]`正式关联全部叶目标；旧的`goalId`仍兼容单目标任务。插件为每个关联目标保存独立 revision，成员的`goal_context`、`goal_submit`、证据校验和待验收通知都会按关联列表工作。不要只绑定文件的第一个小节再让成员提交其它小节；未关联的目标会被拒绝，避免权限边界被任务描述隐式扩大。
 
 主模型用`mission_wait`结束当前生成，成员继续工作。结果进入持久消息箱，主会话空闲时按通知策略集中处理；忙时不向Pi原生follow-up无限排队。常规成员进度合并保存，不单独唤醒。默认任务成功和失败都会唤醒；主模型可通过`mission_notifications`分别设置，不必改变定时汇报间隔。
+
+底部成员面板依次优先显示：执行中 → 失败／阻塞／进程待核对等需要处理的成员 → 排队 → 等待下游 → 完成／取消／待命。同一优先级按名称稳定排序，工具输出或活动时间变化不会造成上下跳动。空间不足时按状态显示隐藏数量，例如“另有 2执行中、1需处理、3待命”；目标较多或终端较矮时也为成员预留一行。`/agents` 完整列表保持原来的名称顺序，便于定位和选择。
 
 例如可以直接告诉 AI：“任务成功不唤醒，失败唤醒，只在二级目标执行批次收束后叫我验收。”对应设置为`taskSuccess:false`、`taskFailure:true`、`goalReadyLevels:[2]`。`goalAcceptedLevels:[2]`则只在二级目标通过`goal_accept`正式验收后通知，两者独立；一级是主目标，二级是阶段，数组为空表示关闭该类层级通知。“待验收”通知要求所有必需叶子已有验收记录或当前版本的成功任务，没有未结束或进程未知的相关工作，不会自动将目标标为验收完成。
 
@@ -311,7 +315,7 @@ pi --import-session "C:/Pi-Transfers/software"
 
 不带范围时，主对话设置当前会话的压缩模型；`lead`明确设置当前主会话，`member`设置当前主会话未来启动的子智能体默认模型。成员对话自己执行命令时，设置的是该成员自己的压缩模型。`off`是显式退出分块压缩、恢复Pi原生压缩；已有显式关闭设置仍保留。`compaction_model action=status`返回实际`engine`、模型和`modelSelection`，区分当前模型默认分块与独立配置。
 
-主会话配置保存在当前Mission Control session目录，成员默认配置保存在该session目录的`member-compaction-summary.json`；旧的`PI_COMPACTION_SUMMARY_MODEL`和`<Pi agent目录>/compaction-summary.json`仍作为兼容回退：
+主会话配置保存在当前Pi Starhelm session目录，成员默认配置保存在该session目录的`member-compaction-summary.json`；旧的`PI_COMPACTION_SUMMARY_MODEL`和`<Pi agent目录>/compaction-summary.json`仍作为兼容回退：
 
 ```json
 {
@@ -371,7 +375,7 @@ pi --import-session "C:/Pi-Transfers/software"
 
 `context_history(action="batch",requests=[{action:"search",query:"...",role:"user"},{action:"read",id:"...",offset:0}],budgetTokens=4000)`一次处理最多8项，合计输出预算256–6000估算tokens；`nextRequest`及`nextOffset`提供续读位置。单项旧调用继续有效。
 
-用户配置`mission-control.json`可设置`"memberContext":{"mode":"notes","inputLimitTokens":300000}`，只为新成员会话提供默认值，主对话模式保持自己的设置。独立上下文扩展也可单独接受`PI_CONTEXT_DEFAULTS` JSON，不读取Mission Control数据库。已有会话显式模式、预算及更低的已学习安全上限仍优先；30万预算通常在22.5万准备交接。一批大读取跳过预留区也会进入有界交接，不能继续无声膨胀。修改已有成员预算可在该成员使用`context_mode`或`/context budget`。
+用户配置`mission-control.json`可设置`"memberContext":{"mode":"notes","inputLimitTokens":300000}`，只为新成员会话提供默认值，主对话模式保持自己的设置。独立上下文扩展也可单独接受`PI_CONTEXT_DEFAULTS` JSON，不读取Pi Starhelm数据库。已有会话显式模式、预算及更低的已学习安全上限仍优先；30万预算通常在22.5万准备交接。一批大读取跳过预留区也会进入有界交接，不能继续无声膨胀。修改已有成员预算可在该成员使用`context_mode`或`/context budget`。
 
 动态笔记提示位于历史尾部附近，不插入最后一组工具调用与结果之间，避免在每次index更新或用量变化时破坏整个历史前缀。换窗本身仍会改变前缀，网关缓存路由和保留时间也不由插件控制。排查可用`scripts/audit-prompt-cache.mjs --state-dir <会话状态目录> --session-file <主日志> --since <带时区时间> --until <带时区时间> --output <新文件>`；只读已保存的usage，分成员计算token加权命中率，不导出正文、私有推理或密钥。具体案例见[长任务与缓存修复](docs/design/mission-control-v2/LONG-RUN-CACHE-2026-10-20.md)。
 

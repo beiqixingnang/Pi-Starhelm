@@ -612,6 +612,13 @@ def main():
             text = "".join(block.get("text", "") for block in message["content"])
             return message.get("isError", False), text
 
+        failed, text = call_tool("mission_status", {})
+        runtime_status = json.loads(text)
+        assert not failed and runtime_status["runtime"]["packageName"] == "pi-starhelm", text
+        assert runtime_status["runtime"]["version"] == json.loads((candidate / "package.json").read_text())["version"]
+        assert mission()["id"] == original["id"]
+        checks.append("the renamed pi-starhelm package loaded through the same-session reload and retained its original goal ledger")
+
         failed, text = call_tool("context_mode", {"mode": "notes"})
         assert failed and "current user's authorization" in text
         checks.append("a real model cannot switch the summary conversation to notes without human authorization")

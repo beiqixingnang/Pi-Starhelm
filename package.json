@@ -1,17 +1,17 @@
 {
-  "name": "pi-mission-control",
-  "version": "2.15.0",
+  "name": "pi-starhelm",
+  "version": "2.16.0",
   "private": true,
   "description": "Pi task runtime with automatic completion wakeups, persistent teams, runtime-owned maintenance, bounded compaction and native UI integration.",
   "type": "module",
   "license": "MIT",
   "repository": {
     "type": "git",
-    "url": "https://github.com/beiqixingnang/pi-mission-control.git"
+    "url": "https://github.com/beiqixingnang/Pi-Starhelm.git"
   },
-  "homepage": "https://github.com/beiqixingnang/pi-mission-control",
+  "homepage": "https://github.com/beiqixingnang/Pi-Starhelm",
   "bugs": {
-    "url": "https://github.com/beiqixingnang/pi-mission-control/issues"
+    "url": "https://github.com/beiqixingnang/Pi-Starhelm/issues"
   },
   "keywords": [
     "pi-package"

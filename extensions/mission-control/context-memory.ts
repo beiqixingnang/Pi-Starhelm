@@ -42,7 +42,7 @@ interface RepairState {
   reason: string;
 }
 
-/** Standalone conversation memory: no Mission Control store or task/goal API dependency. */
+/** Standalone conversation memory: no Pi Starhelm store or task/goal API dependency. */
 export function installContextMemory(pi: ExtensionAPI) {
   const role: ContextRole =
     process.env.PI_CONTEXT_ROLE === "member" ? "member" : "lead";
@@ -65,7 +65,7 @@ export function installContextMemory(pi: ExtensionAPI) {
         id,
       );
     }
-    // Optional standalone host defaults, also usable without Mission Control.
+    // Optional standalone host defaults, also usable without Pi Starhelm.
     // Explicit per-session choices always win; no other plugin database is read.
     const defaults = JSON.parse(
       process.env.PI_CONTEXT_DEFAULTS ??

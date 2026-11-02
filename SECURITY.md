@@ -1,6 +1,6 @@
 # Security policy
 
-Mission Control v2 is trusted local automation inside Pi, not a separate user account or universal sandbox.
+Pi Starhelm v2 is trusted local automation inside Pi, not a separate user account or universal sandbox.
 
 Message timelines use Pi's public custom UI, public events and bounded read-only log pages. The plugin does not patch Pi program files or native component prototypes. The withdrawn 2.0.7 adapter retains only explicit, checksum-guarded restoration of its own recorded changes; installation is disabled. See docs/design/mission-control-v2/TIMESTAMPS.md.
 

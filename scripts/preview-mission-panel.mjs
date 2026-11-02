@@ -113,6 +113,9 @@ function frame(name, title, component, columns, rows) {
 }
 try {
   for (const [name, role] of [
+    ["a-idle-1", "待命成员"],
+    ["a-idle-2", "待命成员"],
+    ["a-idle-3", "待命成员"],
     ["cpu-executor", "CPU执行员"],
     ["cpu-reviewer", "CPU监督员"],
     ["gpu-executor", "GPU执行员"],
@@ -318,7 +321,7 @@ try {
   tui.start();
   frame(
     "01-main-wide",
-    "目标 / 定时任务 / 子智能体状态表 · Pi隔离预览",
+    "Pi Starhelm · 执行与异常优先 · Pi隔离预览",
     main,
     120,
     30,

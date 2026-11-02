@@ -238,7 +238,7 @@ export async function exportTransfer(options: ExportOptions) {
     );
     await fsp.writeFile(
       path.join(partial, "README.txt"),
-      'Pi Mission Control 对话迁移包\n\n在新电脑安装相同版本 Pi、克隆并安装插件、克隆工作区后，在工作区终端运行：\npi --import-session "本迁移包目录"\n\n已有 Pi 可 /reload 后执行 /project import "本迁移包目录"。\n核对源码、模型配置和旧电脑已停止工作后手动 /mission resume。\n\n本包仅含对话、目标与验收、成员记录、工作笔记和本会话运行配置；不含插件源码、工作区仓库或 API 密钥配置。未提交的工作区修改请自行复制。导入不重放旧命令。\n',
+      'Pi Starhelm 对话迁移包\n\n在新电脑安装相同版本 Pi、克隆并安装插件、克隆工作区后，在工作区终端运行：\npi --import-session "本迁移包目录"\n\n已有 Pi 可 /reload 后执行 /project import "本迁移包目录"。\n核对源码、模型配置和旧电脑已停止工作后手动 /mission resume。\n\n本包仅含对话、目标与验收、成员记录、工作笔记和本会话运行配置；不含插件源码、工作区仓库或 API 密钥配置。未提交的工作区修改请自行复制。导入不重放旧命令。\n',
     );
     const files: TransferFile[] = [];
     for (const name of await walk(partial)) {

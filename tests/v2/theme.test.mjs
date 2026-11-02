@@ -241,7 +241,7 @@ test("status table separates goal, schedules and members while retaining the inp
         .join("\n");
       assert.match(visible, /目标.*保留图形输出/);
       assert.match(visible, /定时任务.*阶段复核/);
-      assert.match(visible, /另有 \d名成员/);
+      assert.match(visible, /另有 4待命/);
     });
   }
 });

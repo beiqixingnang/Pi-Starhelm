@@ -80,24 +80,63 @@ export function board(
   const schedules = s.schedules
     .filter((x) => x.state === "active")
     .sort((a, b) => a.nextAt - b.nextAt || a.id.localeCompare(b.id));
-  const memberRows = s.members.map((member) => {
-    const task = memberTask(member, s.tasks);
-    const activity = kernel.store.get<{ tool?: string }>(
-      `activity:${member.id}`,
+  const memberRows = s.members
+    .map((member) => {
+      const task = memberTask(member, s.tasks);
+      const activity = kernel.store.get<{ tool?: string }>(
+        `activity:${member.id}`,
+      );
+      const needsAttention = Boolean(
+        task &&
+          (task.blockedReason ||
+            task.state === "failed" ||
+            task.state === "interrupted" ||
+            task.processState === "unknown"),
+      );
+      const status =
+        task?.processState === "unknown"
+          ? "进程待核对"
+          : task?.blockedReason
+            ? "阻塞"
+            : task
+              ? (stateNames[task.state] ?? task.state)
+              : "待命";
+      const priority =
+        task?.state === "running" && !needsAttention
+          ? 0
+          : needsAttention
+            ? 1
+            : task?.state === "queued"
+              ? 2
+              : task?.state === "waiting"
+                ? 3
+                : 4;
+      return {
+        category: "子智能体",
+        id: member.id,
+        name: member.name,
+        status,
+        priority,
+        hiddenStatus: needsAttention
+          ? "需处理"
+          : task?.state === "waiting"
+            ? "等待"
+            : status,
+        detail: task?.blockedReason
+          ? cleanText(task.blockedReason, 160)
+          : task?.state === "running"
+            ? (activity?.tool ?? "工作中")
+            : task?.phase === "review"
+              ? "复核"
+              : "",
+      };
+    })
+    .sort(
+      (a, b) =>
+        a.priority - b.priority ||
+        a.name.localeCompare(b.name) ||
+        a.id.localeCompare(b.id),
     );
-    return {
-      category: "子智能体",
-      name: member.name,
-      status: task ? (stateNames[task.state] ?? task.state) : "待命",
-      detail: task?.blockedReason
-        ? cleanText(task.blockedReason, 160)
-        : task?.state === "running"
-          ? (activity?.tool ?? "工作中")
-          : task?.phase === "review"
-            ? "复核"
-            : "",
-    };
-  });
   const goals = kernel.store
     .goals()
     .filter(
@@ -181,7 +220,10 @@ export function board(
   );
   const goalsShown = goalRows.slice(
     0,
-    Math.max(1, limit - 3 - (table ? remindersShown : 0)),
+    Math.max(
+      1,
+      limit - 3 - (table ? remindersShown : 0) - Number(memberRows.length > 0),
+    ),
   );
   const hiddenGoals = Math.max(
     0,
@@ -195,17 +237,26 @@ export function board(
     limit - 3 - remindersShown - goalsShown.length,
   );
   const shown = memberRows.slice(0, availableMembers);
-  const hiddenMembers = memberRows.length - shown.length,
-    hiddenReminders = reminderRows.length - remindersShown;
-  const footer = (membersHidden: number, remindersHidden: number) =>
-    [
+  const hiddenReminders = reminderRows.length - remindersShown;
+  const footer = (visibleMembers: number, remindersHidden: number) => {
+    const counts = new Map<string, number>();
+    for (const member of memberRows.slice(visibleMembers))
+      counts.set(
+        member.hiddenStatus,
+        (counts.get(member.hiddenStatus) ?? 0) + 1,
+      );
+    const hidden = [...counts]
+      .map(([state, count]) => `${count}${state}`)
+      .join("、");
+    return [
+      hidden ? `另有 ${hidden}` : "",
       hiddenGoals ? `另有 ${hiddenGoals}个目标` : "",
-      membersHidden ? `另有 ${membersHidden}名成员` : "",
       remindersHidden ? `另有 ${remindersHidden}项提醒` : "",
       "/mission goals 目标详情 · /agents 成员对话",
     ]
       .filter(Boolean)
       .join(" · ");
+  };
   let lines: string[];
   if (table) {
     const widths = [8, width - 57, 14, 26];
@@ -230,7 +281,7 @@ export function board(
       ...goalsShown.map(row),
       ...reminderRows.slice(0, remindersShown).map(row),
       ...shown.map(row),
-      footer(hiddenMembers, hiddenReminders),
+      footer(shown.length, hiddenReminders),
     ];
   } else {
     const running = memberRows.filter((r) => r.status === "执行中").length,
@@ -240,10 +291,20 @@ export function board(
     const showProgress =
       goalsShown.length === 1 &&
       Boolean(goalsShown[0].detail) &&
-      limit > goalsShown.length + 3;
+      limit > goalsShown.length + 3 + Number(memberRows.length > 0);
+    const showMemberSummary =
+      !memberRows.length ||
+      limit - goalsShown.length - 3 - Number(showProgress) >= 1;
     const compactShown = memberRows.slice(
       0,
-      Math.max(0, limit - goalsShown.length - 3 - Number(showProgress)),
+      Math.max(
+        0,
+        limit -
+          goalsShown.length -
+          2 -
+          Number(showProgress) -
+          Number(showMemberSummary),
+      ),
     );
     lines = [
       ...goalsShown.map(
@@ -258,12 +319,11 @@ export function board(
           ]
         : []),
       `定时 · ${reminderCount}项${reminderCount ? " · " + reminderRows[0].detail + " " + reminderRows[0].name : " · 无"}`,
-      `成员 · ${memberRows.length}名 · 执行 ${running} · 等待 ${waiting}`,
+      ...(showMemberSummary
+        ? [`成员 · ${memberRows.length}名 · 执行 ${running} · 等待 ${waiting}`]
+        : []),
       ...compactShown.map(memberLine),
-      footer(
-        memberRows.length - compactShown.length,
-        Math.max(0, reminderCount - 1),
-      ),
+      footer(compactShown.length, Math.max(0, reminderCount - 1)),
     ];
   }
   if (expanded) {

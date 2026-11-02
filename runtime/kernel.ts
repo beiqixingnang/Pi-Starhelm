@@ -3161,8 +3161,8 @@ export class MissionKernel {
       m = s.mission;
     if (!m) return "";
     return [
-      `Mission Control state: mission=${m.id} status=${m.status}; notificationPolicy=${JSON.stringify(s.notificationPolicy)}.`,
-      `Current Mission Control recovery plan: ${JSON.stringify(this.recoveryPlan(5))}. Use only the named current recovery tool; reload does not attest stopped processes.`,
+      `Pi Starhelm state: mission=${m.id} status=${m.status}; notificationPolicy=${JSON.stringify(s.notificationPolicy)}.`,
+      `Current Pi Starhelm recovery plan: ${JSON.stringify(this.recoveryPlan(5))}. Use only the named current recovery tool; reload does not attest stopped processes.`,
       `Mission ${m.id}: ${m.status}. ${cleanText(m.objective, 1200)}`,
       `Acceptance criteria (${m.criteria.length}; goal_tree has details): ${m.criteria
         .slice(0, 6)
@@ -3562,7 +3562,7 @@ export class MissionKernel {
       }
     });
     const content =
-      `Mission Control updates. Handle these identities once; inspect artifacts when needed.\nPending saved notifications: ${pending.length}; quiet: ${pending.filter((delivery) => !trigger(delivery)).length}. This batch includes ${eligible.length}; collect remaining saved results when needed without rerunning work.\n\n` +
+      `Pi Starhelm updates. Handle these identities once; inspect artifacts when needed.\nPending saved notifications: ${pending.length}; quiet: ${pending.filter((delivery) => !trigger(delivery)).length}. This batch includes ${eligible.length}; collect remaining saved results when needed without rerunning work.\n\n` +
       eligible
         .map(
           (d) =>
