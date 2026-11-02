@@ -1,4 +1,8 @@
-import test from "node:test";
+import {
+  piTest as test,
+  currentTestSignal,
+  withPiTestSignal,
+} from "./pi-test-context.mjs";
 import assert from "node:assert/strict";
 import fs from "node:fs/promises";
 import fsSync from "node:fs";
@@ -47,6 +51,8 @@ const model = {
   cost: { input: 0, output: 0, cacheRead: 0, cacheWrite: 0 },
 };
 async function harness(fn, mode = "rpc") {
+  const signal = currentTestSignal();
+  signal?.throwIfAborted();
   const cwd = fsSync.realpathSync.native(
       await fs.mkdtemp(path.join(os.tmpdir(), "mc-v2-pi-")),
     ),
@@ -84,9 +90,29 @@ async function harness(fn, mode = "rpc") {
       path.join(root, "extensions/mission-control/compaction.ts"),
     ],
   });
-  let session;
+  let session, shutdownPromise;
+  const operations = new Set();
+  const shutdown = () => {
+    if (!session) return Promise.resolve();
+    return (shutdownPromise ??= (async () => {
+      await session.abort();
+      // A reload already in progress must finish before shutdown, otherwise it
+      // could reopen the kernel after cleanup has closed it.
+      await Promise.allSettled([...operations]);
+      try {
+        await session.extensionRunner.emit({
+          type: "session_shutdown",
+          reason: "quit",
+        });
+      } finally {
+        session.dispose();
+      }
+    })());
+  };
+  const onAbort = () => void shutdown().catch(() => {});
   try {
     await resources.reload();
+    signal?.throwIfAborted();
     ({ session } = await createAgentSession({
       cwd,
       agentDir,
@@ -95,12 +121,16 @@ async function harness(fn, mode = "rpc") {
       resourceLoader: resources,
       sessionManager: SessionManager.create(cwd, path.join(cwd, "sessions")),
     }));
+    signal?.throwIfAborted();
     await session.bindExtensions({
       mode,
       onError: (error) => errors.push(error),
     });
+    signal?.addEventListener("abort", onAbort, { once: true });
+    signal?.throwIfAborted();
     session.subscribe((event) => events.push(event));
     const tool = async (name, args = {}) => {
+      signal?.throwIfAborted();
       if (name === "context_mode" && args.mode)
         await session.extensionRunner.emitInput(
           `请把当前会话改成 ${args.mode} 模式`,
@@ -112,15 +142,46 @@ async function harness(fn, mode = "rpc") {
       return await found.execute(
         "direct-" + crypto.randomUUID(),
         args,
-        new AbortController().signal,
+        signal ?? new AbortController().signal,
       );
     };
+    const view = new Proxy(session, {
+      get(target, key) {
+        const value = Reflect.get(target, key, target);
+        if (typeof value !== "function") return value;
+        if (!["prompt", "reload", "compact", "bindExtensions"].includes(key))
+          return value.bind(target);
+        return (...args) => {
+          signal?.throwIfAborted();
+          const operation = Promise.resolve().then(() => {
+            signal?.throwIfAborted();
+            return value.apply(target, args);
+          });
+          operations.add(operation);
+          operation.then(
+            () => operations.delete(operation),
+            () => operations.delete(operation),
+          );
+          return operation;
+        };
+      },
+    });
     const snapshot = async () =>
       JSON.parse((await tool("mission_status")).content[0].text);
     try {
-      await fn({ cwd, session, settings, events, errors, tool, snapshot });
+      await fn({
+        cwd,
+        agentDir,
+        session: view,
+        settings,
+        events,
+        errors,
+        tool,
+        snapshot,
+      });
       assert.deepEqual(errors, []);
     } catch (error) {
+      if (signal?.aborted) throw error;
       console.error(
         "INTEGRATION_DIAGNOSTIC",
         JSON.stringify(
@@ -162,20 +223,18 @@ async function harness(fn, mode = "rpc") {
       throw error;
     }
   } finally {
-    if (session) {
-      await session.abort();
-      await session.extensionRunner.emit({
-        type: "session_shutdown",
-        reason: "quit",
-      });
-      session.dispose();
+    signal?.removeEventListener("abort", onAbort);
+    try {
+      await shutdown();
+    } finally {
+      await fs.rm(cwd, { recursive: true, force: true });
     }
-    await fs.rm(cwd, { recursive: true, force: true });
   }
 }
 async function until(fn, timeout = 25000) {
   const start = Date.now();
   while (Date.now() - start < timeout) {
+    currentTestSignal()?.throwIfAborted();
     if (await fn()) return;
     await new Promise((r) => setTimeout(r, 50));
   }
@@ -250,6 +309,73 @@ async function interactiveKeys(h) {
     },
   };
 }
+
+test(
+  "a cancelled real Pi integration stops its lead and member before the next session reloads",
+  { timeout: 20000 },
+  async () => {
+    const controller = new AbortController();
+    const signal = AbortSignal.any([currentTestSignal(), controller.signal]);
+    const reason = new Error("Synthetic integration deadline");
+    let cwd, stateDirectory, lead;
+    await assert.rejects(
+      withPiTestSignal(signal, () =>
+        harness(async (h) => {
+          cwd = h.cwd;
+          stateDirectory = path.join(
+            h.agentDir,
+            "mission-control/v2",
+            h.session.sessionManager.getSessionId(),
+          );
+          lead = h.session.prompt('V2_TEST:{"op":"hang"}');
+          await until(() => h.session.isStreaming);
+          const startedFile = path.join(cwd, "member.started");
+          await h.tool("subagent", {
+            task: "V2_TEST:" + JSON.stringify({ op: "hang", startedFile }),
+          });
+          await until(() => fsSync.existsSync(startedFile));
+          controller.abort(reason);
+          assert.throws(
+            () => h.session.reload(),
+            (error) => error === reason,
+          );
+          await until(() => false);
+        }),
+      ),
+      (error) => error === reason,
+    );
+    await lead;
+    assert.equal(fsSync.existsSync(cwd), false);
+    assert.equal(
+      fsSync.existsSync(path.join(stateDirectory, "owner.lock")),
+      false,
+    );
+    const db = new DatabaseSync(path.join(stateDirectory, "state.sqlite"), {
+      readOnly: true,
+    });
+    try {
+      const tasks = db
+        .prepare("SELECT data FROM tasks")
+        .all()
+        .map((row) => JSON.parse(row.data));
+      assert.equal(tasks.length, 1);
+      assert.equal(tasks[0].state, "interrupted");
+      assert.equal(tasks[0].processState, "stopped");
+    } finally {
+      db.close();
+    }
+    await harness(async (h) => {
+      await h.session.reload();
+      await h.session.prompt(
+        'V2_TEST:{"op":"answer","text":"FRESH_SESSION_AFTER_CANCEL"}',
+      );
+      assert.match(
+        h.session.getLastAssistantText(),
+        /FRESH_SESSION_AFTER_CANCEL/,
+      );
+    });
+  },
+);
 
 test(
   "native editor Escape cancels a managed descendant tree and keeps the goal paused through reload",

@@ -3,6 +3,7 @@
 - Connect Escape in the main editor to a temporary user pause followed by cancellation of running, queued, waiting and descendant tasks in the selected goal. Preserve goal definitions, evidence, budgets, member identities and reminder schedules; require explicit continuation without replaying cancelled commands.
 - Keep native Escape input handling for lead cancellation and queued text. Respect member/goal panels, blocking extension prompts, native selectors, overlays and autocomplete; unsubscribe handlers on reload and retain unknown-process evidence when termination cannot be confirmed.
 - Cover native-editor routing, idle-lead interruption, real host command/grandchild termination, repeated Escape, scope/hold preservation and paused reload. Exercise literal Escape bytes in the dedicated Pi TUI with both idle and streaming lead states.
+- Isolate real Pi integration cases in separate agent homes, keep ownership until asynchronous cleanup finishes after a timeout, and cancel abandoned sessions and polling. Allow a bounded total CI deadline for cold member-process startup while retaining stage and RPC deadlines.
 
 # 2.16.1 — reliable Windows directory-lock diagnostics (2026-11-02)
 
