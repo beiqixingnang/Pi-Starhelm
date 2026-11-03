@@ -832,6 +832,78 @@ test("supervisor waits without a live process and resumes its same task for desc
     assert.equal(h.wakes.length, 1);
   }));
 
+test("a member blocker immediately wakes the lead and explicit retry creates a new attempt", () =>
+  using(async (h) => {
+    h.add("worker");
+    const original = h.kernel.dispatch(
+      "worker",
+      "Apply the requested source edit",
+    );
+    await flush();
+    const token = h.workers[0].assignment.token;
+    const delivery = h.kernel.memberRequest(token, {
+      op: "wait",
+      id: "blocked-edit",
+      blockedReason:
+        "edit matched two occurrences; a unique code range is required",
+    });
+    assert.equal(delivery.kind, "blocker");
+    assert.equal(h.kernel.store.task(original.id).state, "waiting");
+    assert.match(
+      h.kernel.store.task(original.id).blockedReason,
+      /two occurrences/,
+    );
+    h.workers[0].resolve({
+      ok: true,
+      text: "blocked",
+      processState: "stopped",
+    });
+    await flush();
+    h.idle();
+    await h.kernel.tick();
+    assert.equal(h.wakes.length, 1);
+    assert.match(h.wakes[0].content, /unique code range/);
+    const retry = h.kernel.resumeTask(original.id);
+    assert.notEqual(retry.id, original.id);
+    assert.equal(h.kernel.store.task(original.id).state, "cancelled");
+    assert.equal(h.kernel.store.task(retry.id).attemptOf, original.id);
+  }));
+
+test("a scheduled member progress check requeues the same task without waking the lead", () =>
+  using(async (h) => {
+    h.add("worker", ["child"]);
+    h.add("child");
+    const task = h.kernel.dispatch("worker", "Wait for the child result");
+    await flush();
+    const token = h.workers[0].assignment.token;
+    h.kernel.memberRequest(token, {
+      op: "message",
+      id: "child-task",
+      operation: "assign",
+      to: "child",
+      message: "Produce the pending result",
+    });
+    const result = h.kernel.memberRequest(token, {
+      op: "wait",
+      id: "scheduled-check",
+      reportAfterMs: 5000,
+    });
+    assert.equal(result.waiting, true);
+    assert.equal(h.kernel.store.task(task.id).state, "waiting");
+    h.workers[0].resolve({
+      ok: true,
+      text: "waiting",
+      processState: "stopped",
+    });
+    await flush();
+    h.advance(5000);
+    await h.kernel.tick();
+    assert.equal(h.wakes.length, 0);
+    assert.equal(h.kernel.store.task(task.id).state, "running");
+    assert.equal(h.workers.length, 3);
+    assert.match(h.workers[2].assignment.prompt, /Scheduled progress check/);
+  }));
+
 test("directed communication, ancestor-cycle checks and stale execution tokens reject unauthorized work", () =>
   using(async (h) => {
     h.add("reviewer");

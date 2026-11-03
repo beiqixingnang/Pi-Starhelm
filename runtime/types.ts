@@ -94,6 +94,8 @@ export interface Task {
   continuation?: string;
   sessionFile?: string;
   blockedReason?: string;
+  /** When a waiting member requested a bounded progress check. */
+  reportAfterAt?: number;
   archivedAt?: number;
 }
 export interface ReviewHold {
@@ -235,6 +237,7 @@ export interface Delivery {
   kind:
     | "result"
     | "failure"
+    | "blocker"
     | "decision"
     | "progress"
     | "reminder"

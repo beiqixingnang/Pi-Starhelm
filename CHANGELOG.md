@@ -1,5 +1,7 @@
 # 2.17.0 — Escape interrupts the current managed task tree (2026-11-02)
 
+- Add explicit member blocker handling to `team_wait({blockedReason})`. Persist the blocker, wake the lead immediately with an actionable blocker delivery, and require `team_resume` for a deliberate new attempt after the cause is resolved. Keep `reportAfterMs` as a separate same-member progress check and reject combining the two fields. Add kernel and real Pi coverage for the ambiguous-edit workflow.
+
 - Connect Escape in the main editor to a temporary user pause followed by cancellation of running, queued, waiting and descendant tasks in the selected goal. Preserve goal definitions, evidence, budgets, member identities and reminder schedules; require explicit continuation without replaying cancelled commands.
 - Keep native Escape input handling for lead cancellation and queued text. Respect member/goal panels, blocking extension prompts, native selectors, overlays and autocomplete; unsubscribe handlers on reload and retain unknown-process evidence when termination cannot be confirmed.
 - Cover native-editor routing, idle-lead interruption, real host command/grandchild termination, repeated Escape, scope/hold preservation and paused reload. Exercise literal Escape bytes in the dedicated Pi TUI with both idle and streaming lead states.

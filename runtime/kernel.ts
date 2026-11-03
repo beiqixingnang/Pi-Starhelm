@@ -3314,6 +3314,20 @@ export class MissionKernel {
           if (
             task.state === "waiting" &&
             !task.blockedReason &&
+            task.reportAfterAt !== undefined &&
+            task.reportAfterAt <= now &&
+            !this.live.has(task.id)
+          ) {
+            task.state = "queued";
+            delete task.reportAfterAt;
+            task.updatedAt = now;
+            this.store.putTask(task);
+            this.store.event("task.report-due", task.id);
+          }
+        for (const task of this.store.tasks(true))
+          if (
+            task.state === "waiting" &&
+            !task.blockedReason &&
             !this.live.has(task.id) &&
             this.store.children(task.id).every(terminal)
           )
@@ -3587,6 +3601,7 @@ export class MissionKernel {
           (m?.status === "active" ||
             [
               "failure",
+              "blocker",
               "decision",
               "recovery",
               "reminder",
@@ -3600,7 +3615,7 @@ export class MissionKernel {
         ? 3
         : d.kind === "decision"
           ? 0
-          : d.kind === "failure"
+          : d.kind === "blocker"
             ? 1
             : 2;
     const eligible = pending
@@ -4274,14 +4289,59 @@ export class MissionKernel {
               d.taskId &&
               children.some((child) => child.id === d.taskId),
           );
-        if (!children.some((child) => !terminal(child)) && !unseen)
+        const blockedReason =
+          request.blockedReason === undefined
+            ? undefined
+            : cleanText(String(request.blockedReason), 2000);
+        const reportAfterMs = request.reportAfterMs;
+        if (blockedReason !== undefined && !blockedReason.trim())
+          throw new Error("blockedReason must not be empty");
+        if (
+          reportAfterMs !== undefined &&
+          (!Number.isSafeInteger(reportAfterMs) ||
+            reportAfterMs < 1000 ||
+            reportAfterMs > 86400000)
+        )
+          throw new Error("reportAfterMs must be between 1000 and 86400000");
+        if (blockedReason !== undefined && reportAfterMs !== undefined)
+          throw new Error(
+            "team_wait cannot combine blockedReason with reportAfterMs",
+          );
+        if (
+          blockedReason === undefined &&
+          !children.some((child) => !terminal(child)) &&
+          !unseen
+        )
           throw new Error(
             "No unfinished or unreviewed downstream work remains. Finish the task or assign new approved work instead of waiting again.",
           );
         task.state = "waiting";
         task.updatedAt = this.now();
-        this.store.putTask(task);
-        result = { waiting: true, taskId: task.id };
+        if (blockedReason !== undefined) {
+          task.blockedReason = blockedReason;
+          delete task.reportAfterAt;
+          this.store.putTask(task);
+          result = this.delivery({
+            key: `blocker:${task.id}:${task.epoch}:${request.id}`,
+            taskId: task.id,
+            from: member.name,
+            to: "lead",
+            kind: "blocker",
+            summary: `Task ${task.id} from ${member.name} is blocked: ${blockedReason}. Inspect the blocker and use team_resume only after the cause is resolved.`,
+          });
+        } else {
+          delete task.blockedReason;
+          if (reportAfterMs !== undefined) {
+            task.reportAfterAt = this.now() + reportAfterMs;
+            task.continuation = `Scheduled progress check reached after ${reportAfterMs}ms. Inspect current descendant states and saved receipts before taking the next approved step; do not repeat completed work.`;
+          } else delete task.reportAfterAt;
+          this.store.putTask(task);
+          result = {
+            waiting: true,
+            taskId: task.id,
+            reportAfterAt: task.reportAfterAt,
+          };
+        }
       } else if (request.op === "message") {
         const to = request.to;
         if (

@@ -2510,6 +2510,71 @@ test(
 );
 
 test(
+  "real Pi member blocker wakes the lead immediately instead of waiting for the routine report",
+  { timeout: 30000 },
+  () =>
+    harness(async (h) => {
+      await h.session.prompt(
+        'V2_TEST:{"op":"answer","text":"READY","noRepeatWake":true}',
+      );
+      await h.tool("team_spawn", {
+        name: "edit-worker",
+        role: "Reproduce an ambiguous edit",
+        workspace: { execution: "files" },
+      });
+      const sent = JSON.parse(
+        (
+          await h.tool("team_send", {
+            to: "edit-worker",
+            wait: false,
+            message:
+              "V2_TEST:" +
+              JSON.stringify({
+                op: "tool",
+                name: "team_wait",
+                args: {
+                  blockedReason:
+                    "edit matched two occurrences; read a unique code range before retrying",
+                },
+              }),
+          })
+        ).content[0].text,
+      );
+      await until(async () => {
+        const task = (await h.snapshot()).tasks.find(
+          (candidate) => candidate.id === sent.taskId,
+        );
+        return (
+          task?.state === "waiting" &&
+          /two occurrences/.test(task.blockedReason ?? "")
+        );
+      });
+      await until(() =>
+        h.session.sessionManager
+          .getBranch()
+          .some(
+            (entry) =>
+              entry.type === "custom_message" &&
+              entry.customType === "mission-control-wake" &&
+              /two occurrences/.test(String(entry.content)),
+          ),
+      );
+      const state = await h.snapshot();
+      assert.equal(
+        state.tasks.find((task) => task.id === sent.taskId).state,
+        "waiting",
+      );
+      assert.ok(
+        state.deliveries.some(
+          (delivery) =>
+            delivery.taskId === sent.taskId && delivery.kind === "blocker",
+        ),
+      );
+      assert.equal(state.mission.status, "active");
+    }),
+);
+
+test(
   "real Pi reactivates newly added Pi Starhelm tools when an old session is reloaded",
   { timeout: 30000 },
   () =>

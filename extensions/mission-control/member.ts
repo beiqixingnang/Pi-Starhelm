@@ -489,11 +489,21 @@ export default async function (pi: ExtensionAPI) {
     name: "team_wait",
     label: "Wait for descendants",
     description:
-      "Call alone after assigning descendants. Ends this member turn; the runtime resumes the same session when descendants finish.",
+      "Call alone after assigning descendants. Ends this member turn; the runtime resumes the same session when descendants finish. Use reportAfterMs for a bounded progress check, or blockedReason when an external/tool/environment blocker needs the coordinator's immediate attention. Do not combine them.",
     executionMode: "sequential",
-    parameters: Type.Object({}),
-    async execute(id) {
-      return { ...result(await request(id, { op: "wait" })), terminate: true };
+    parameters: Type.Object({
+      reportAfterMs: Type.Optional(
+        Type.Integer({ minimum: 1000, maximum: 86400000 }),
+      ),
+      blockedReason: Type.Optional(
+        Type.String({ minLength: 1, maxLength: 4000 }),
+      ),
+    }),
+    async execute(id, args) {
+      return {
+        ...result(await request(id, { op: "wait", ...args })),
+        terminate: true,
+      };
     },
   });
   register({

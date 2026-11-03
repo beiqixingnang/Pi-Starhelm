@@ -41,6 +41,7 @@ export function triggersLead(delivery: Delivery, policy: NotificationPolicy) {
   if (delivery.to !== "lead") return true;
   if (delivery.kind === "result" && delivery.taskId) return policy.taskSuccess;
   if (delivery.kind === "failure" && delivery.taskId) return policy.taskFailure;
+  if (delivery.kind === "blocker" && delivery.taskId) return true;
   if (delivery.kind === "batch") return policy.taskBatchSettled;
   if (delivery.kind === "goal" && delivery.goalEvent === "submitted")
     return false;

@@ -206,7 +206,7 @@ SQLite是唯一正式账本，不要求模型维护MD或JSON文件。当前阶�
 }
 ```
 
-通信ACL是有向的，发送者allow必须包含接收者；双方互通需分别配置。成员始终可向lead发分类note。组内`team_message`创建下游任务，`team_wait`结束成员回合，下游完成后自动恢复同一成员会话复核。向祖先重新派工会拒绝，应使用note。
+通信ACL是有向的，发送者allow必须包含接收者；双方互通需分别配置。成员始终可向lead发分类note。组内`team_message`创建下游任务，`team_wait`结束成员回合，下游完成后自动恢复同一成员会话复核。`team_wait({reportAfterMs})`只安排该成员的进度检查；`team_wait({blockedReason})`会立即唤醒主对话处理阻塞，不能等例行报告，也不能和`reportAfterMs`同时使用。向祖先重新派工会拒绝，应使用note。
 
 | execution | 文件工具 | 命令能力 |
 | --- | --- | --- |
