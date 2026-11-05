@@ -1087,6 +1087,63 @@ export class MissionKernel {
       return record;
     });
   }
+
+  acceptGoalsBatch(
+    items: Array<{
+      goalId: string;
+      revision: number;
+      evidence: GoalEvidence[];
+    }>,
+  ) {
+    if (!Array.isArray(items) || !items.length || items.length > 100)
+      throw new Error("Supply 1..100 goal acceptance items");
+    const accepted: Array<{
+      goalId: string;
+      revision: number;
+      acceptanceId: string;
+    }> = [];
+    const rejected: Array<{
+      goalId?: string;
+      revision?: number;
+      error: string;
+    }> = [];
+    const seen = new Set<string>();
+    for (const item of items) {
+      if (seen.has(item.goalId)) {
+        rejected.push({
+          goalId: item.goalId,
+          revision: item.revision,
+          error: "Duplicate goalId in one batch",
+        });
+        continue;
+      }
+      seen.add(item.goalId);
+      try {
+        const record = this.acceptGoal(
+          item.goalId,
+          item.evidence,
+          item.revision,
+        );
+        accepted.push({
+          goalId: item.goalId,
+          revision: item.revision,
+          acceptanceId: record.id,
+        });
+      } catch (error) {
+        rejected.push({
+          goalId: item.goalId,
+          revision: item.revision,
+          error: String(error instanceof Error ? error.message : error),
+        });
+      }
+    }
+    return {
+      accepted,
+      rejected,
+      partial: accepted.length > 0 && rejected.length > 0,
+      progress: this.goals.summary(),
+    };
+  }
   submitGoalsFromMember(
     task: Task,
     entries: Array<{
@@ -2178,6 +2235,7 @@ export class MissionKernel {
         tasks.filter((task) => task.state === state).length,
       ]),
     );
+    const reviewQueue = this.goals.reviewQueue(mission.id, undefined, 0, 1);
     this.store.transaction(() => {
       batch.notified = true;
       this.store.set(key, batch);
@@ -2187,7 +2245,7 @@ export class MissionKernel {
         to: "lead",
         kind: "batch",
         taskBatchId: batch.id,
-        summary: `Execution batch settled for mission ${mission.id}: ${tasks.length} tasks; ${JSON.stringify(counts)}. No tracked task remains running, queued or waiting. Collect saved results and inspect unfinished goals before acceptance or further dispatch. This is not goal acceptance or proof that untracked external builds ended. Existing fixed-time reminders and report deadlines are unchanged.`,
+        summary: `Execution batch settled for mission ${mission.id}: ${tasks.length} tasks; ${JSON.stringify(counts)}. No tracked task remains running, queued or waiting. Acceptance queue counts=${JSON.stringify(reviewQueue.counts)}. Collect saved results and inspect unfinished goals before acceptance or further dispatch. This is not goal acceptance or proof that untracked external builds ended. Existing fixed-time reminders and report deadlines are unchanged.`,
       });
       this.store.event("task.batch-settled", batch.id, {
         missionId: mission.id,
@@ -3216,6 +3274,7 @@ export class MissionKernel {
     const s = this.snapshot(),
       m = s.mission;
     if (!m) return "";
+    const reviewQueue = this.goals.reviewQueue(m.id, undefined, 0, 1);
     return [
       `Pi Starhelm state: mission=${m.id} status=${m.status}; notificationPolicy=${JSON.stringify(s.notificationPolicy)}.`,
       `Current Pi Starhelm recovery plan: ${JSON.stringify(this.recoveryPlan(5))}. Use only the named current recovery tool; reload does not attest stopped processes.`,
@@ -3225,6 +3284,7 @@ export class MissionKernel {
         .map((x, i) => `${i + 1}. ${cleanText(x, 200)}`)
         .join(" | ")}`,
       `Goal ledger: ${JSON.stringify(s.goals)}. goal_tree reads definitions, submissions, evidence and task references. goal_submit records pending evidence; goal_accept is the acceptance operation.`,
+      `Acceptance queue: ${JSON.stringify(reviewQueue.counts)}. Use goal_review_queue for bounded pages; use goal_accept_batch only with exact current revisions and evidence.`,
       `Tasks: ${
         s.tasks
           .filter((t) => !terminal(t))

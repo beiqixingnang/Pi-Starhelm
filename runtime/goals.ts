@@ -1089,6 +1089,110 @@ export class GoalLedger {
         })),
     };
   }
+
+  reviewQueue(
+    rootId = this.store.mission()?.id,
+    category?:
+      | "accepted"
+      | "current_submission"
+      | "missing_submission"
+      | "blocked"
+      | "planned"
+      | "awaiting_work",
+    offset = 0,
+    limit = 20,
+  ) {
+    if (!rootId) {
+      return {
+        rootId: undefined,
+        counts: {},
+        total: 0,
+        offset,
+        nextOffset: undefined,
+        entries: [],
+      };
+    }
+    if (!Number.isSafeInteger(offset) || offset < 0)
+      throw new Error("reviewQueue offset must be a nonnegative integer");
+    if (!Number.isSafeInteger(limit) || limit < 1 || limit > 100)
+      throw new Error("reviewQueue limit must be between 1 and 100");
+    const nodes = this.store.goals(rootId);
+    const classify = (goal: GoalNode) => {
+      if (goal.state === "accepted" && goal.acceptanceId)
+        return "accepted" as const;
+      if (this.blockers(goal.id).length || goal.state === "blocked")
+        return "blocked" as const;
+      const submission = goal.submissionId
+        ? this.store.goalSubmission(goal.submissionId)
+        : undefined;
+      if (
+        submission?.state === "current" &&
+        submission.revision === goal.revision
+      )
+        return "current_submission" as const;
+      if (goal.state === "review" || submission)
+        return "missing_submission" as const;
+      if (goal.state === "planned") return "planned" as const;
+      return "awaiting_work" as const;
+    };
+    const all = nodes
+      .filter((goal) => !excluded(goal))
+      .map((goal) => {
+        const submission = goal.submissionId
+          ? this.store.goalSubmission(goal.submissionId)
+          : undefined;
+        const tasks = this.store
+          .missionTasks(rootId)
+          .filter((task) => taskGoalIds(task).includes(goal.id));
+        return {
+          id: goal.id,
+          rootId: goal.rootId,
+          parentId: goal.parentId,
+          depth: goal.depth,
+          objective: cleanText(goal.objective, 300),
+          revision: goal.revision,
+          state: goal.state,
+          category: classify(goal),
+          submissionId: submission?.id,
+          submissionRevision: submission?.revision,
+          submissionState: submission?.state,
+          submissionTaskId: submission?.taskId,
+          taskCount: tasks.length,
+          terminalTaskCount: tasks.filter((task) =>
+            ["completed", "failed", "cancelled", "interrupted"].includes(
+              task.state,
+            ),
+          ).length,
+          blockers: this.blockers(goal.id).slice(0, 4),
+        };
+      });
+    const counts = Object.fromEntries(
+      [
+        "accepted",
+        "current_submission",
+        "missing_submission",
+        "blocked",
+        "planned",
+        "awaiting_work",
+      ].map((name) => [
+        name,
+        all.filter((entry) => entry.category === name).length,
+      ]),
+    );
+    const filtered = category
+      ? all.filter((entry) => entry.category === category)
+      : all;
+    return {
+      rootId,
+      category,
+      counts,
+      total: filtered.length,
+      offset,
+      nextOffset: offset + limit < filtered.length ? offset + limit : undefined,
+      entries: filtered.slice(offset, offset + limit),
+      bounded: true,
+    };
+  }
   snapshot(rootId?: string) {
     const nodes = this.store.goals(rootId);
     return {

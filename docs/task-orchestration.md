@@ -79,6 +79,8 @@ AI 可调用 `project_resolve({path:"D:/projects/Unifier/logs/result.txt"})`，�
 
 监督员随后**单独**调用 `team_wait({})`。执行员完成后，插件直接把交付发送给监督员，监督员读取收据、审查结果并回复；主对话不需要转发或代跑测试。主 Goal 会同时计入祖先和下游任务，直到负责人审查完毕才认为这条任务链完成。
 
+当所有受管任务都已经进入终态且没有外部等待时，`mission_wait`/`goal_wait` 会拒绝继续等待，并返回验收队列摘要。此时使用 `goal_review_queue` 按证据包分页读取 `current_submission`、`missing_submission`、`blocked`、`planned` 和 `accepted`，必要时用 `goal_accept_batch` 按当前 revision 逐项尝试验收；批量结果会分别返回成功和被 revision、证据或未收束工作拒绝的条目。
+
 约定半小时检查进度可用 `team_wait({reportAfterMs:1800000})`；这会在截止时间重新排队同一任务并唤醒该任务负责人，不会唤醒主对话或重跑执行员已经完成的命令。遇到阻塞时，成员必须使用 `team_wait({blockedReason:"缺少测试依赖"})`；这会立即生成主对话可处理的阻塞通知，任务保持阻塞，不等待下一次例行报告。主模型先检查具体原因和产物，条件解决后再用 `team_resume` 创建明确的新尝试。两个字段不能同时使用。
 
 不要向正在等待自己的祖先派回一个新任务，这会形成循环。向祖先报告信息使用 `team_message({to:"supervisor",message:"进度说明",operation:"note",wait:false})`。组内 ACL 继续由父进程验证，消息不会扩大接收方的目录或执行权限。

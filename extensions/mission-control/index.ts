@@ -1333,6 +1333,17 @@ export default function (pi: ExtensionAPI) {
     context: ExtensionContext,
   ) => {
     const tasks = current().store.tasks(true);
+    const unfinished = tasks.filter((task) => {
+      const hold = current().store.get<{ state?: string }>(
+        `reviewHold:${task.memberId}`,
+      );
+      return (
+        !terminal(task) ||
+        task.processState === "unknown" ||
+        Boolean(hold && hold.state !== "released")
+      );
+    });
+    const externalWait = current().store.mission()?.externalWait;
     if (oneShot(context)) {
       await Promise.all(
         tasks.filter((t) => !t.parentId).map((t) => waitForTask(t.id, signal)),
@@ -1352,10 +1363,12 @@ export default function (pi: ExtensionAPI) {
         results.map((t) => t.id),
       );
     }
-    if (!tasks.length)
+    if (!unfinished.length && !externalWait) {
+      const queue = current().goals.reviewQueue(undefined, undefined, 0, 1);
       throw new Error(
-        "No unfinished tasks. Collect results and continue approved work or complete the mission with evidence.",
+        `Nothing is waiting: all managed tasks are terminal and no external wait exists. Review queue counts=${JSON.stringify(queue.counts)}; use goal_review_queue/goal_tree, goal_accept_batch or continue the approved objective instead of mission_wait.`,
       );
+    }
     return "Lead turn ended. Runtime maintenance remains active; lead wakeups follow mission_notifications and the independent report interval.";
   };
   tool(
@@ -1752,6 +1765,22 @@ export default function (pi: ExtensionAPI) {
     },
   );
   tool(
+    "goal_accept_batch",
+    "Accept multiple goals with evidence",
+    "Attempt up to 100 exact goal acceptances independently. Every item still requires the current goal revision, valid evidence and settled descendants; the result separates accepted and rejected items so one stale or incomplete goal does not hide the rest.",
+    Type.Object({
+      items: Type.Array(
+        Type.Object({
+          goalId: Type.String(),
+          revision: Type.Integer({ minimum: 0 }),
+          evidence: goalEvidence,
+        }),
+        { minItems: 1, maxItems: 100 },
+      ),
+    }),
+    (args) => current().acceptGoalsBatch(args.items),
+  );
+  tool(
     "goal_activate",
     "Select main goal",
     "Select one existing main goal while preserving its progress, evidence, activity and budget usage. Settle running/unknown executions and observe old results first. Selection cannot release user, workspace, decision, budget or recovery holds. Completion does not automatically activate another main goal.",
@@ -1777,6 +1806,35 @@ export default function (pi: ExtensionAPI) {
       rootId: Type.Optional(Type.String()),
     }),
     (args) => current().goals.export(args.destination, args.rootId),
+  );
+  tool(
+    "goal_review_queue",
+    "Review goal acceptance queue",
+    "Read a bounded, categorized acceptance queue for the active main goal. Categories are accepted, current_submission, missing_submission, blocked, planned and awaiting_work. This is a read-only ledger view; it never accepts or changes goals.",
+    Type.Object({
+      rootId: Type.Optional(Type.String()),
+      category: Type.Optional(
+        Type.Union(
+          [
+            "accepted",
+            "current_submission",
+            "missing_submission",
+            "blocked",
+            "planned",
+            "awaiting_work",
+          ].map((value) => Type.Literal(value)),
+        ),
+      ),
+      offset: Type.Optional(Type.Integer({ minimum: 0 })),
+      limit: Type.Optional(Type.Integer({ minimum: 1, maximum: 100 })),
+    }),
+    (args) =>
+      current().goals.reviewQueue(
+        args.rootId,
+        args.category,
+        args.offset ?? 0,
+        args.limit ?? 20,
+      ),
   );
   tool(
     "goal_update",

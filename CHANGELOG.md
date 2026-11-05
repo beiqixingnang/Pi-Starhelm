@@ -1,3 +1,10 @@
+# 2.18.0 — bounded waits and complete acceptance queues (2026-11-05)
+
+- Reject interactive `mission_wait`/`goal_wait` when every managed task is terminal and no external wait exists; return an actionable queue-oriented error instead of allowing the lead to idle.
+- Add read-only `goal_review_queue` with categorized counts for accepted, current submissions, missing submissions, blocked, planned and awaiting-work goals.
+- Add independent `goal_accept_batch` attempts for up to 100 exact goal revisions. Each item keeps the existing evidence, revision and settled-work fences and returns accepted/rejected results without hiding partial failures.
+- Include acceptance queue counts in execution-batch wake summaries and lead mechanism guidance. Add real Pi coverage for no-work waits, paged queue state and revision-fenced batch acceptance.
+
 # 2.17.0 — Escape interrupts the current managed task tree (2026-11-02)
 
 - Add explicit member blocker handling to `team_wait({blockedReason})`. Persist the blocker, wake the lead immediately with an actionable blocker delivery, and require `team_resume` for a deliberate new attempt after the cause is resolved. Keep `reportAfterMs` as a separate same-member progress check and reject combining the two fields. Add kernel and real Pi coverage for the ambiguous-edit workflow.

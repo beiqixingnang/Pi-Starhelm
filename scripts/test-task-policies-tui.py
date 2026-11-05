@@ -705,7 +705,7 @@ def main():
         failed, text = call_tool("mission_capabilities", {})
         assert not failed, text
         catalog = json.loads(text)
-        assert len(catalog["tools"]) == 62 and all(len(tool["description"]) <= 200 for tool in catalog["tools"])
+        assert len(catalog["tools"]) == 64 and all(len(tool["description"]) <= 200 for tool in catalog["tools"])
         checks.append("expanded tool catalog remained complete valid JSON without truncating the new plan tools")
 
         failed, text = call_tool("goal_plan_update", {"goalId": original["id"], "plan": "Parent roadmap: reuse valid evidence, implement the approved batch and verify its output.", "planRevision": 0})

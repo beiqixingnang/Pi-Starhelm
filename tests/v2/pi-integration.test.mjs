@@ -2575,6 +2575,124 @@ test(
 );
 
 test(
+  "real Pi rejects lead wait after all managed tasks settle and exposes the acceptance queue",
+  { timeout: 30000 },
+  () =>
+    harness(async (h) => {
+      await h.tool("team_spawn", {
+        name: "settled-worker",
+        role: "Produce one terminal receipt",
+        workspace: { execution: "files" },
+      });
+      const result = await h.tool("team_send", {
+        to: "settled-worker",
+        wait: true,
+        message: 'V2_TEST:{"op":"answer","text":"SETTLED_RECEIPT"}',
+      });
+      assert.ok(!result.isError, result.content?.[0]?.text);
+      const waiting = await h.tool("mission_wait");
+      assert.equal(waiting.isError, true);
+      assert.match(waiting.content[0].text, /Nothing is waiting/);
+      assert.match(waiting.content[0].text, /goal_review_queue/);
+    }),
+);
+
+test(
+  "real Pi goal review queue groups planned and accepted leaves and batch acceptance remains revision-fenced",
+  { timeout: 30000 },
+  () =>
+    harness(async (h) => {
+      const plan = JSON.parse(
+        (
+          await h.tool("goal_plan", {
+            goals: [
+              {
+                key: "root",
+                objective: "Review queue root",
+                criteria: ["Both leaves accepted"],
+              },
+              {
+                key: "left",
+                parentId: "root",
+                objective: "Accept left leaf",
+                criteria: ["Left evidence"],
+              },
+              {
+                key: "right",
+                parentId: "root",
+                objective: "Accept right leaf",
+                criteria: ["Right evidence"],
+              },
+            ],
+          })
+        ).content[0].text,
+      );
+      const nodes = Object.fromEntries(
+        plan.created.map((node) => [node.key, node]),
+      );
+      const before = JSON.parse(
+        (await h.tool("goal_review_queue", { category: "planned" })).content[0]
+          .text,
+      );
+      assert.ok(before.entries.some((entry) => entry.id === nodes.left.id));
+      assert.ok(before.entries.some((entry) => entry.id === nodes.right.id));
+      const accepted = JSON.parse(
+        (
+          await h.tool("goal_accept_batch", {
+            items: [
+              {
+                goalId: nodes.left.id,
+                revision: nodes.left.revision,
+                evidence: [
+                  {
+                    criterion: 1,
+                    source: "statement",
+                    summary: "Left leaf evidence is recorded and reviewed.",
+                  },
+                ],
+              },
+              {
+                goalId: nodes.right.id,
+                revision: nodes.right.revision,
+                evidence: [
+                  {
+                    criterion: 1,
+                    source: "statement",
+                    summary: "Right leaf evidence is recorded and reviewed.",
+                  },
+                ],
+              },
+            ],
+          })
+        ).content[0].text,
+      );
+      assert.equal(accepted.accepted.length, 2);
+      assert.equal(accepted.rejected.length, 0);
+      const after = JSON.parse(
+        (await h.tool("goal_review_queue", {})).content[0].text,
+      );
+      assert.equal(after.counts.accepted, 2);
+      const stale = await h.tool("goal_accept_batch", {
+        items: [
+          {
+            goalId: nodes.left.id,
+            revision: nodes.left.revision,
+            evidence: [
+              {
+                criterion: 1,
+                source: "statement",
+                summary: "A repeated acceptance remains idempotent.",
+              },
+            ],
+          },
+        ],
+      });
+      assert.ok(!stale.isError, stale.content[0].text);
+      assert.equal(JSON.parse(stale.content[0].text).accepted.length, 1);
+    }),
+);
+
+test(
   "real Pi reactivates newly added Pi Starhelm tools when an old session is reloaded",
   { timeout: 30000 },
   () =>
@@ -4263,7 +4381,7 @@ test(
       const catalog = JSON.parse(
         (await h.tool("mission_capabilities")).content[0].text,
       );
-      assert.equal(catalog.tools.length, 62);
+      assert.equal(catalog.tools.length, 64);
       assert.ok(catalog.tools.every((t) => t.active));
       assert.ok(catalog.tools.every((t) => t.description.length <= 200));
       const planTool = JSON.parse(
