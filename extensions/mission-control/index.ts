@@ -31,7 +31,7 @@ import {
 } from "../../runtime/types.ts";
 import { resolveWorkspace } from "../workspace/policy.ts";
 import { searchWeb, fetchPage } from "../../runtime/web.ts";
-import { board } from "./ui.ts";
+import { createBoardRenderer } from "./ui.ts";
 import { MissionPanel } from "./viewer.ts";
 import { GoalPanel } from "./goals-ui.ts";
 import { installLeadHistory } from "./lead-history.ts";
@@ -183,6 +183,7 @@ export default function (pi: ExtensionAPI) {
     renderTimer: ReturnType<typeof setTimeout> | undefined;
   let panel: MissionPanel | undefined;
   let goalPanel: GoalPanel | undefined;
+  let dashboardRenderer: ReturnType<typeof createBoardRenderer> | undefined;
   let modeState: StarhelmModeState = { mode: "complex" };
   let removeCompactionListener: (() => void) | undefined;
   let activeCompactionRun: string | undefined;
@@ -341,6 +342,7 @@ export default function (pi: ExtensionAPI) {
     };
   }
   const refresh = () => {
+    dashboardRenderer?.invalidate();
     if (renderTimer) return;
     renderTimer = setTimeout(() => {
       renderTimer = undefined;
@@ -354,18 +356,16 @@ export default function (pi: ExtensionAPI) {
               return {
                 render: (width) => {
                   try {
-                    return board(
-                      current(),
+                    dashboardRenderer ??= createBoardRenderer(current());
+                    return dashboardRenderer.render(
                       width,
-                      false,
                       theme,
                       process.stdout.rows ?? 30,
                     );
                   } catch {
-                    return board(
-                      current(),
+                    dashboardRenderer ??= createBoardRenderer(current());
+                    return dashboardRenderer.render(
                       width,
-                      false,
                       undefined,
                       process.stdout.rows ?? 30,
                     );
@@ -402,6 +402,7 @@ export default function (pi: ExtensionAPI) {
     goalPanel = undefined;
     panel?.dispose();
     panel = undefined;
+    dashboardRenderer = undefined;
     agentsOpen = false;
     const old = kernel;
     kernel = undefined;

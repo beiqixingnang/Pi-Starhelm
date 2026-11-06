@@ -14,7 +14,7 @@ const jiti = createJiti(import.meta.url, {
     "@earendil-works/pi-tui": path.join(hostDependencyDir("@earendil-works/pi-tui"), "dist/index.js"),
   },
 });
-const { board } = await jiti.import(
+const { board, createBoardRenderer } = await jiti.import(
   path.resolve("extensions/mission-control/ui.ts"),
 );
 const { MissionPanel, teamRows } = await jiti.import(
@@ -127,6 +127,32 @@ test("dashboard rendering uses bounded roster data instead of a full task snapsh
     const lines = board(kernel, 160, false, undefined, 42).join("\n");
     assert.match(lines, /dashboard-worker\s+│ 完成/);
     assert.match(lines, /Dashboard fixture/);
+  }));
+
+test("bottom widget reuses its rendered dashboard across terminal repaints", () =>
+  withRoster(async ({ kernel }) => {
+    kernel.setGoal("Cached dashboard fixture", ["Reuse unchanged rows"]);
+    const original = kernel.dashboardSnapshot.bind(kernel);
+    let snapshots = 0;
+    kernel.dashboardSnapshot = (...args) => {
+      snapshots++;
+      return original(...args);
+    };
+    const renderer = createBoardRenderer(kernel);
+    const first = renderer.render(140, undefined, 42);
+    for (let frame = 0; frame < 32; frame++)
+      assert.strictEqual(renderer.render(140, undefined, 42), first);
+    assert.equal(snapshots, 1);
+
+    renderer.invalidate();
+    renderer.render(140, undefined, 42);
+    assert.equal(snapshots, 2);
+
+    renderer.render(141, undefined, 42);
+    assert.equal(snapshots, 3);
+    kernel.store.set("dashboard-render-version", true);
+    renderer.render(141, undefined, 42);
+    assert.equal(snapshots, 4);
   }));
 
 test("team workbench polls only for conversation changes or displayed activity time", () =>

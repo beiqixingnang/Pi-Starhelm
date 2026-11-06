@@ -346,3 +346,41 @@ export function board(
       ),
     );
 }
+
+export function createBoardRenderer(kernel: MissionKernel) {
+  let cachedLines: string[] | undefined;
+  let cachedVersion = -1;
+  let cachedWidth = -1;
+  let cachedRows = -1;
+  let cachedMinute = -1;
+  let cachedTheme: UiTheme | undefined;
+  let invalidated = true;
+
+  return {
+    invalidate() {
+      invalidated = true;
+    },
+    render(width: number, theme?: UiTheme, terminalRows = 30) {
+      const version = kernel.store.changeCount();
+      const minute = Math.floor(Date.now() / 60000);
+      if (
+        invalidated ||
+        !cachedLines ||
+        version !== cachedVersion ||
+        width !== cachedWidth ||
+        terminalRows !== cachedRows ||
+        minute !== cachedMinute ||
+        theme !== cachedTheme
+      ) {
+        cachedLines = board(kernel, width, false, theme, terminalRows);
+        cachedVersion = version;
+        cachedWidth = width;
+        cachedRows = terminalRows;
+        cachedMinute = minute;
+        cachedTheme = theme;
+        invalidated = false;
+      }
+      return cachedLines;
+    },
+  };
+}

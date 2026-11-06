@@ -1,3 +1,8 @@
+# 2.18.3 — cache the bottom status panel between terminal repaints (2026-11-06)
+
+- Reuse the bottom status widget's rendered rows while the database state, terminal size, theme and visible minute remain unchanged. Keyboard input and scroll repaints no longer re-query roster state and rebuild the panel each frame.
+- Invalidate on kernel changes and preserve minute-based reminder labels; cover repaint reuse, explicit invalidation, state changes and resize.
+
 # 2.18.2 — simple and complex conversation modes (2026-11-06)
 
 - Add `/starhelm simple|complex|status` with per-conversation persistence. Simple mode exposes only active Pi-native tools, blocks extension tool calls (including indirect codemode calls), pauses Starhelm maintenance and removes its prompt, memory, reconnect and custom-compaction behavior.

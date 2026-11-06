@@ -1,6 +1,6 @@
 {
   "name": "pi-starhelm",
-  "version": "2.18.2",
+  "version": "2.18.3",
   "private": true,
   "description": "Pi task runtime with automatic completion wakeups, persistent teams, runtime-owned maintenance, bounded compaction and native UI integration.",
   "type": "module",
