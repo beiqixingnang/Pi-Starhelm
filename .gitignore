@@ -17,3 +17,7 @@ compaction-summary.json
 
 # Local reference sources and private session analysis
 /.reference/
+
+# Keep the vendored Pi snapshot complete, including its upstream .pi files.
+!vendor/pi-1.5.0/.pi/
+!vendor/pi-1.5.0/.pi/**
