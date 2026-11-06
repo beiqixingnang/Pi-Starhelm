@@ -98,6 +98,7 @@ export class MissionKernel {
   private now: () => number;
   private timer?: ReturnType<typeof setTimeout>;
   private closing = false;
+  private suspended = false;
   private ticking = false;
   private live = new Map<string, Live>();
   private tokens = new Map<string, { taskId: string; epoch: number }>();
@@ -208,8 +209,18 @@ export class MissionKernel {
       this.recovery.restart();
       this.restoreBudgetHold();
     });
-    if (background) this.loop();
+    if (background && !this.suspended) this.loop();
     this.changed();
+  }
+  suspend() {
+    this.suspended = true;
+    if (this.timer) clearTimeout(this.timer);
+    this.timer = undefined;
+  }
+  resume() {
+    if (this.closing || !this.suspended) return;
+    this.suspended = false;
+    if (!this.ticking) this.loop();
   }
   private changed() {
     this.syncActivity();
@@ -310,7 +321,7 @@ export class MissionKernel {
     });
   }
   private loop() {
-    if (this.closing) return;
+    if (this.closing || this.suspended) return;
     this.timer = setTimeout(() => {
       void this.tick()
         .catch((error) =>
@@ -3434,7 +3445,7 @@ export class MissionKernel {
       .slice(0, 10000);
   }
   async tick() {
-    if (this.closing || this.ticking) return;
+    if (this.closing || this.suspended || this.ticking) return;
     this.ticking = true;
     const writesBefore = this.store.changeCount();
     try {
@@ -3742,6 +3753,7 @@ export class MissionKernel {
       triggersLead(d, policy) && this.validLeadDelivery(d);
     if (
       this.closing ||
+      this.suspended ||
       this.userHold ||
       m?.humanPaused ||
       this.store.get("relocationHold") ||

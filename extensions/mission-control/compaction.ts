@@ -16,6 +16,7 @@ import {
   SUMMARY_SYSTEM_PROMPT,
 } from "../../runtime/summarize.ts";
 import { installContextMemory } from "./context-memory.ts";
+import { readStarhelmMode } from "../../runtime/mode.ts";
 
 interface Config {
   model?: string;
@@ -36,6 +37,13 @@ interface MemberRuntime {
 type Target = "lead" | "member";
 export default function (pi: ExtensionAPI) {
   const memory = installContextMemory(pi);
+  const simpleMode = (ctx: any) => {
+    const sessionId = ctx?.sessionManager?.getSessionId?.();
+    return Boolean(
+      sessionId &&
+        readStarhelmMode(getAgentDir(), sessionId).mode === "simple",
+    );
+  };
   let generation = 0,
     lifecycle = new AbortController();
   let activeSummaryContext: any;
@@ -694,6 +702,8 @@ export default function (pi: ExtensionAPI) {
       "Set the summary model for this lead/member conversation or future subagents. Use lead/member provider/model-id, off, or status.",
     handler: async (args, ctx) => {
       try {
+        if (simpleMode(ctx))
+          throw new Error("Starhelm simple mode is active; use /starhelm complex first.");
         const tokens = args.trim().split(/\s+/).filter(Boolean);
         let target: Target | undefined;
         if (["lead", "main"].includes(tokens[0]?.toLowerCase())) {
@@ -725,6 +735,7 @@ export default function (pi: ExtensionAPI) {
     },
   });
   pi.on("session_before_compact", async (event, ctx) => {
+    if (simpleMode(ctx)) return;
     const activeCtx = scopedContext(ctx),
       epoch = generation,
       sessionId = ctx.sessionManager.getSessionId(),
@@ -797,6 +808,7 @@ export default function (pi: ExtensionAPI) {
     }
   });
   pi.on("session_before_tree", async (event, ctx) => {
+    if (simpleMode(ctx)) return;
     if (!event.preparation.userWantsSummary) return;
     const activeCtx = scopedContext(ctx),
       epoch = generation,

@@ -56,6 +56,30 @@ export default function (pi: ExtensionAPI) {
         );
     },
   });
+  pi.registerCommand("fixture-tools", {
+    description: "Test-only active tool snapshot",
+    handler: async (nonce) => {
+      if (!process.env.MC_FIXTURE_TOOL_STATE) return;
+      const destination =
+        process.env.MC_FIXTURE_TOOL_STATE +
+        "." +
+        nonce.replace(/[^a-zA-Z0-9_-]/g, "_");
+      const temporary = destination + ".tmp";
+      fs.writeFileSync(
+        temporary,
+        JSON.stringify({
+          nonce,
+          active: pi.getActiveTools(),
+          tools: pi.getAllTools().map((tool) => ({
+            name: tool.name,
+            source: tool.sourceInfo.source,
+            path: tool.sourceInfo.path,
+          })),
+        }),
+      );
+      fs.renameSync(temporary, destination);
+    },
+  });
   pi.registerTool({
     name: "fixture_large_read",
     label: "Read synthetic source batch",

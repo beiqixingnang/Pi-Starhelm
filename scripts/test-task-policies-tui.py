@@ -69,10 +69,11 @@ def main():
     fcntl.ioctl(slave, termios.TIOCSWINSZ, struct.pack("HHHH", 42, 140, 0, 0))
     environment = {key: value for key, value in os.environ.items() if not any(secret in key.upper() for secret in ["API_KEY", "AUTH_TOKEN", "ACCESS_TOKEN"])}
     lifecycle_trace = reports / ("tui-lifecycle-" + uuid.uuid4().hex[:8] + ".jsonl")
+    tool_state = reports / ("tui-tool-state-" + uuid.uuid4().hex[:8] + ".json")
     summary_control = reports / ("summary-control-" + uuid.uuid4().hex[:8] + ".json")
     summary_trace = reports / ("summary-requests-" + uuid.uuid4().hex[:8] + ".jsonl")
     environment.update(PI_CODING_AGENT_DIR=str(agent), PI_OFFLINE="1", TERM="xterm-256color", COLUMNS="140", LINES="42",
-        MC_FIXTURE_LIFECYCLE_TRACE=str(lifecycle_trace), MC_FIXTURE_SUMMARY_CONTROL=str(summary_control), MC_FIXTURE_SUMMARY_TRACE=str(summary_trace))
+        MC_FIXTURE_LIFECYCLE_TRACE=str(lifecycle_trace), MC_FIXTURE_TOOL_STATE=str(tool_state), MC_FIXTURE_SUMMARY_CONTROL=str(summary_control), MC_FIXTURE_SUMMARY_TRACE=str(summary_trace))
     process = subprocess.Popen([shutil.which("pi"), "--offline", "--no-mcp", "--no-skills", "--no-context-files", "--no-prompt-templates",
         "--tools", "*",
         "-e", str(fixture), "--provider", "mission-fixture", "--model", "model", "--thinking", "off", *arguments],
@@ -125,6 +126,13 @@ def main():
 
     def tool(name, args):
         line("V2_TEST:" + json.dumps({"op": "tool", "name": name, "args": args, "noRepeatWake": True}, separators=(",", ":")))
+
+    def active_tool_snapshot(label):
+        nonce = uuid.uuid4().hex
+        snapshot_file = tool_state.with_name(tool_state.name + "." + nonce)
+        line("/fixture-tools " + nonce)
+        wait(lambda: snapshot_file.exists(), label)
+        return json.loads(snapshot_file.read_text())
 
     def editor_ready(label):
         nonce = uuid.uuid4().hex
@@ -193,6 +201,30 @@ def main():
         reload("candidate loaded through literal /reload in the same Pi process")
         assert mission()["id"] == original["id"] and mission()["humanPaused"]
         assert mission()["outputTokens"] == original["outputTokens"]
+        mode_file = agent / "mission-control/v2" / config["id"] / "mode.json"
+        line("/starhelm simple")
+        wait(lambda: mode_file.exists() and json.loads(mode_file.read_text()).get("mode") == "simple",
+            "simple mode was persisted for the existing conversation")
+        simple_tools = active_tool_snapshot("Pi exposed a fresh simple-mode tool snapshot")
+        native_names = {
+            "read", "write", "edit", "bash", "powershell", "grep", "find", "ls"
+        }
+        assert set(simple_tools["active"]) <= native_names
+        assert "read" in simple_tools["active"]
+        assert "mission_status" not in simple_tools["active"]
+        reload(
+            "simple mode retained its native-only tool set through literal /reload in the same Pi process"
+        )
+        simple_tools = active_tool_snapshot("reloaded simple mode retained the native-only tool set")
+        assert set(simple_tools["active"]) <= native_names
+        line("/starhelm complex")
+        wait(lambda: json.loads(mode_file.read_text()).get("mode") == "complex",
+            "complex mode restored in the existing conversation")
+        complex_tools = active_tool_snapshot("Pi exposed the restored complex-mode tool set")
+        assert "mission_status" in complex_tools["active"]
+        checks.append(
+            "simple/complex mode switches in-chat, preserves the tool set through same-process reload, and restores complex tools"
+        )
         # A legacy goal_stop may have archived a user's intended temporary
         # pause. Restore only planning in this existing conversation.
         if not legacy_workspace_block:

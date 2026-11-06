@@ -20,6 +20,7 @@ interface Persistence {
   read(): ReconnectOptions | undefined;
   write(value: ReconnectOptions): void;
   retryAllowed?(): boolean;
+  enabled?(): boolean;
 }
 /** Native recovery runs first. This hook supplies bounded continuation after it settles. */
 export default function installReconnect(
@@ -75,6 +76,7 @@ export default function installReconnect(
   pi.events.on("mission-control:interrupt", reset);
   pi.on("message_end", (event, ctx) => {
     if (event.message.role !== "assistant") return;
+    if (persistence?.enabled?.() === false) return;
     providerAborted =
       event.message.stopReason === "aborted" && !ctx.signal?.aborted;
     if (
@@ -94,6 +96,10 @@ export default function installReconnect(
     }
   });
   pi.on("agent_before_settle", async (event, ctx) => {
+    if (persistence?.enabled?.() === false) {
+      waiting?.abort();
+      return;
+    }
     if (
       (event.outcome !== "error" &&
         !(event.outcome === "aborted" && providerAborted)) ||
@@ -227,6 +233,8 @@ export default function installReconnect(
         "Provider recovery: status | on | off | retries <0..100> | delay <seconds>. Native Pi retry remains separate.",
       handler: async (args, ctx) => {
         try {
+          if (persistence?.enabled?.() === false)
+            throw new Error("Starhelm simple mode is active; use /starhelm complex first.");
           const [action = "status", value] = args
             .trim()
             .split(/\s+/)

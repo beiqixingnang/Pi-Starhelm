@@ -1,3 +1,9 @@
+# 2.18.2 — simple and complex conversation modes (2026-11-06)
+
+- Add `/starhelm simple|complex|status` with per-conversation persistence. Simple mode exposes only active Pi-native tools, blocks extension tool calls (including indirect codemode calls), pauses Starhelm maintenance and removes its prompt, memory, reconnect and custom-compaction behavior.
+- Refuse simple mode while managed tasks remain unfinished. Pause any active mission without discarding its history; switching back restores the prior tool set but leaves the mission paused until an explicit `/mission resume`.
+- Preserve the selected mode and tool loadout across `/reload`; cover tool filtering, state isolation, runtime suspension, and same-process TUI switching.
+
 # 2.18.1 — bounded dashboard state and worker diagnostics (2026-11-06)
 
 - Normalize explicit `null` in optional `goalIds` before delegation validation; keep child-level omission consistent with inherited task defaults.

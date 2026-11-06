@@ -49,6 +49,13 @@ import {
   optionalText,
   workspaceInput,
 } from "../../runtime/arguments.ts";
+import {
+  isPiCoreTool,
+  readStarhelmMode,
+  simpleModeToolNames,
+  writeStarhelmMode,
+  type StarhelmModeState,
+} from "../../runtime/mode.ts";
 
 const optional = (schema: any) =>
   Type.Optional(Type.Union([schema, Type.Null()]));
@@ -176,6 +183,7 @@ export default function (pi: ExtensionAPI) {
     renderTimer: ReturnType<typeof setTimeout> | undefined;
   let panel: MissionPanel | undefined;
   let goalPanel: GoalPanel | undefined;
+  let modeState: StarhelmModeState = { mode: "complex" };
   let removeCompactionListener: (() => void) | undefined;
   let activeCompactionRun: string | undefined;
   let agentsOpen = false;
@@ -211,7 +219,21 @@ export default function (pi: ExtensionAPI) {
           t.exposure !== "hidden" &&
           leadSources.has(sourcePath(t.sourceInfo.path)),
       );
+  const simpleMode = () => modeState.mode === "simple";
+  const applySimpleTools = () => {
+    const active = pi.getActiveTools();
+    const native = simpleModeToolNames(pi.getAllTools(), active);
+    if (
+      native.length !== active.length ||
+      native.some((name, index) => name !== active[index])
+    )
+      pi.setActiveTools(native);
+  };
   const activateMissionTools = () => {
+    if (simpleMode()) {
+      applySimpleTools();
+      return;
+    }
     const available = new Set(pi.getAllTools().map((t) => t.name));
     const activeNames = pi
       .getActiveTools()
@@ -238,6 +260,19 @@ export default function (pi: ExtensionAPI) {
   const current = () => {
     if (!kernel) throw new Error("Pi Starhelm is not attached to a Pi session");
     return kernel;
+  };
+  const hidePluginUi = (context: ExtensionContext) => {
+    if (renderTimer) clearTimeout(renderTimer);
+    renderTimer = undefined;
+    goalPanel?.dispose();
+    goalPanel = undefined;
+    panel?.dispose();
+    panel = undefined;
+    agentsOpen = false;
+    redraw = undefined;
+    context.ui.setWidget("mission-control", undefined);
+    context.ui.setStatus("mission-control", undefined);
+    context.ui.setStatus("mission-export", undefined);
   };
   function modelStatus() {
     const snapshot = current().snapshot({
@@ -309,7 +344,7 @@ export default function (pi: ExtensionAPI) {
     if (renderTimer) return;
     renderTimer = setTimeout(() => {
       renderTimer = undefined;
-      if (!ctx || !kernel) return;
+      if (!ctx || !kernel || simpleMode()) return;
       if (ctx.mode === "tui") {
         if (!agentsOpen)
           ctx.ui.setWidget(
@@ -378,6 +413,7 @@ export default function (pi: ExtensionAPI) {
     ctx?.ui.setWidget("mission-control", undefined);
     ctx?.ui.setStatus("mission-control", undefined);
     ctx?.ui.setStatus("mission-export", undefined);
+    ctx?.ui.setStatus("starhelm-mode", undefined);
   };
   pi.on("session_start", async (_event, context) => {
     await close();
@@ -402,9 +438,13 @@ export default function (pi: ExtensionAPI) {
           );
       },
     );
+    const sessionId =
+      context.sessionManager.getSessionId() ?? randomUUID();
+    modeState = readStarhelmMode(getAgentDir(), sessionId);
     // Resumed sessions replay their historical active-tool set. Re-add tools
     // introduced by a newer plugin version before the next model request.
-    activateMissionTools();
+    if (simpleMode()) applySimpleTools();
+    else activateMissionTools();
     const settingsFile = path.join(getAgentDir(), "mission-control.json");
     let settings: Partial<Settings> = {};
     try {
@@ -412,7 +452,6 @@ export default function (pi: ExtensionAPI) {
     } catch (error) {
       if ((error as NodeJS.ErrnoException).code !== "ENOENT") throw error;
     }
-    const sessionId = context.sessionManager.getSessionId() ?? randomUUID();
     if (!/^[a-zA-Z0-9_-]{1,120}$/.test(sessionId))
       throw new Error("Invalid session identity");
     const directory = path.join(
@@ -440,7 +479,8 @@ export default function (pi: ExtensionAPI) {
       ),
       isLeadIdle: () => Boolean(ctx?.isIdle() && !ctx?.hasPendingMessages()),
       onChange: refresh,
-      wake: (wake) =>
+      wake: (wake) => {
+        if (simpleMode()) return;
         pi.sendMessage(
           {
             customType: "mission-control-wake",
@@ -453,9 +493,14 @@ export default function (pi: ExtensionAPI) {
             },
           },
           { triggerTurn: true },
-        ),
-      notify: (message) => ctx?.ui.notify(message, "warning"),
-      compact: () => ctx?.compact(),
+        );
+      },
+      notify: (message) => {
+        if (!simpleMode()) ctx?.ui.notify(message, "warning");
+      },
+      compact: () => {
+        if (!simpleMode()) ctx?.compact();
+      },
     });
     try {
       bridge = await openBridge((token, request) =>
@@ -463,6 +508,7 @@ export default function (pi: ExtensionAPI) {
       );
       kernel.bridgeUrl = bridge.url;
       kernel.start();
+      if (simpleMode()) kernel.suspend();
       if (
         !context.sessionManager
           .getBranch()
@@ -485,6 +531,7 @@ export default function (pi: ExtensionAPI) {
     if (context.mode === "tui")
       removeTerminalInput = context.ui.onTerminalInput((data) => {
         if (
+          simpleMode() ||
           !matchesKey(data, "escape") ||
           blockingPrompt ||
           agentsOpen ||
@@ -530,6 +577,10 @@ export default function (pi: ExtensionAPI) {
         // Preserve Pi's native Escape path, including restoring queued input.
         return undefined;
       });
+    context.ui.setStatus(
+      "starhelm-mode",
+      simpleMode() ? "简单模式 · Pi 原生工具" : "复杂模式 · Starhelm",
+    );
     refresh();
   });
   pi.on("ui_prompt_start", () => {
@@ -543,11 +594,19 @@ export default function (pi: ExtensionAPI) {
     ctx = undefined;
   });
   pi.on("input", (event) => {
-    if (event.source === "interactive" && !event.text.startsWith("/"))
+    if (
+      !simpleMode() &&
+      event.source === "interactive" &&
+      !event.text.startsWith("/")
+    )
       kernel?.onHumanInput(event.text);
   });
   pi.on("before_agent_start", (event, context) => {
     ctx = context;
+    if (simpleMode()) {
+      applySimpleTools();
+      return;
+    }
     // A resumed session can restore its historical tool declaration before
     // session_start finishes. Reapply the current registry immediately before
     // building this model request, including schema changes to existing tools.
@@ -581,6 +640,7 @@ export default function (pi: ExtensionAPI) {
     if (reminder) event.systemPromptOptions.promptGuidelines.push(reminder);
   });
   pi.on("context", (event, context) => {
+    if (simpleMode()) return;
     if (kernel && !kernel.admitLeadRequest()) {
       context.abort();
       return;
@@ -600,6 +660,7 @@ export default function (pi: ExtensionAPI) {
     }
   });
   pi.on("message_end", (event, context) => {
+    if (simpleMode()) return;
     if (event.message.role === "assistant") {
       const cancelled =
         Boolean(context.signal?.aborted) &&
@@ -619,10 +680,12 @@ export default function (pi: ExtensionAPI) {
     }
   });
   pi.on("agent_settled", (event) => {
+    if (simpleMode()) return;
     kernel?.leadSettled(event.aborted);
     refresh();
   });
   pi.on("session_compact", (event, context) => {
+    if (simpleMode()) return;
     if (
       kernel?.options.sessionId === context.sessionManager.getSessionId() &&
       context.sessionManager
@@ -634,6 +697,7 @@ export default function (pi: ExtensionAPI) {
     }
   });
   pi.on("session_compact_failed", (event) => {
+    if (simpleMode()) return;
     kernel?.compactionSettled(
       undefined,
       event.errorMessage ??
@@ -642,6 +706,7 @@ export default function (pi: ExtensionAPI) {
     activeCompactionRun = undefined;
   });
   pi.on("session_tree", async () => {
+    if (simpleMode()) return;
     if (
       kernel?.store.mission() &&
       !["complete", "stopped"].includes(kernel.store.mission()!.status)
@@ -654,6 +719,17 @@ export default function (pi: ExtensionAPI) {
     }
   });
   pi.on("tool_call", (event) => {
+    if (simpleMode()) {
+      const tool = pi
+        .getAllTools()
+        .find((candidate) => candidate.name === event.toolName);
+      if (isPiCoreTool(tool)) return;
+      return {
+        block: true,
+        reason:
+          "Starhelm simple mode disables extension tools. Use /starhelm complex to re-enable them.",
+      };
+    }
     if (
       !kernel ||
       !["write", "edit", "bash", "powershell"].includes(event.toolName)
@@ -679,6 +755,7 @@ export default function (pi: ExtensionAPI) {
     }
   });
   pi.on("tool_result", (event) => {
+    if (simpleMode()) return;
     kernel?.goals.captureEnd(
       event.toolCallId,
       textOf({ content: event.content }),
@@ -2516,11 +2593,102 @@ export default function (pi: ExtensionAPI) {
       refresh();
     }
   };
+  pi.registerCommand("starhelm", {
+    description: "Pi Starhelm mode: status | simple | complex",
+    handler: async (args, context) => {
+      try {
+        const requested = args.trim().toLowerCase() || "status";
+        if (requested === "status") {
+          context.ui.notify(
+            JSON.stringify({
+              mode: modeState.mode,
+              activeTools: pi.getActiveTools().length,
+              simpleModeNote:
+                "Simple mode keeps Pi native tools and this switch command available.",
+            }),
+            "info",
+          );
+          return;
+        }
+        if (requested !== "simple" && requested !== "complex")
+          throw new Error("Use /starhelm status|simple|complex");
+        if (requested === modeState.mode) {
+          context.ui.notify(`Starhelm is already in ${requested} mode.`, "info");
+          return;
+        }
+        if (!context.isIdle() || context.hasPendingMessages())
+          throw new Error(
+            "Wait for the current turn and queued messages to finish before changing modes.",
+          );
+        const sessionId = context.sessionManager.getSessionId();
+        if (!sessionId)
+          throw new Error("Mode switching requires a saved Pi conversation.");
+        if (requested === "simple") {
+          const activeTasks = (kernel?.store.tasks() ?? []).filter(
+            (task) =>
+              ["queued", "running", "waiting"].includes(task.state) ||
+              (task.state === "interrupted" &&
+                task.processState !== "stopped"),
+          );
+          if (activeTasks.length)
+            throw new Error(
+              `Cannot switch while ${activeTasks.length} managed task(s) are active or their processes are unknown. Let them finish, or stop/reconcile them with /mission first.`,
+            );
+          const mission = kernel?.store.mission();
+          if (
+            mission &&
+            !["complete", "stopped"].includes(mission.status) &&
+            !mission.humanPaused
+          )
+            await kernel!.userControl("pause");
+          const next: StarhelmModeState = {
+            mode: "simple",
+            restoreTools: pi.getActiveTools(),
+          };
+          writeStarhelmMode(getAgentDir(), sessionId, next);
+          modeState = next;
+          kernel?.suspend();
+          applySimpleTools();
+          hidePluginUi(context);
+          context.ui.setStatus("starhelm-mode", "简单模式 · Pi 原生工具");
+          context.ui.notify(
+            "已开启简单模式：仅向模型开放 Pi 原生工具，并暂停 Starhelm 维护、上下文注入、重连和插件压缩。" +
+              "其他扩展的非工具钩子仍由 Pi 加载。",
+            "info",
+          );
+          return;
+        }
+
+        const restoreTools =
+          modeState.restoreTools ??
+          readStarhelmMode(getAgentDir(), sessionId).restoreTools;
+        writeStarhelmMode(getAgentDir(), sessionId, { mode: "complex" });
+        modeState = { mode: "complex" };
+        if (restoreTools) {
+          const available = new Set(pi.getAllTools().map((tool) => tool.name));
+          pi.setActiveTools(restoreTools.filter((name) => available.has(name)));
+        }
+        activateMissionTools();
+        kernel?.resume();
+        context.ui.setStatus("starhelm-mode", "复杂模式 · Starhelm");
+        refresh();
+        context.ui.notify(
+          "已开启复杂模式。切换前暂停的任务仍保持暂停；需要时用 /mission resume 明确继续。",
+          "info",
+        );
+      } catch (error) {
+        context.ui.notify(String((error as Error).message ?? error), "error");
+      }
+    },
+  });
+
   pi.registerCommand("mission", {
     description:
       "Mission dashboard; goals [export <new-file>|activate <id>|depth <3..12>|skip|cancel <id> <reason>] | policy status|business-only | time|timeline | view <member> | start <objective> | status | pause | resume | stop | report <seconds> | schedules | unschedule <id> | export <new-file.jsonl> | archive <new-directory>",
     handler: async (args, context) => {
       try {
+        if (simpleMode())
+          throw new Error("Starhelm simple mode is active; use /starhelm complex first.");
         const [command, ...rest] = args.trim().split(/\s+/);
         const k = current();
         if (command === "goals") {
@@ -2721,6 +2889,8 @@ export default function (pi: ExtensionAPI) {
       "Open the full-screen team status and member conversation workbench",
     handler: async (args, context) => {
       try {
+        if (simpleMode())
+          throw new Error("Starhelm simple mode is active; use /starhelm complex first.");
         if (context.mode !== "tui") {
           context.ui.notify(
             JSON.stringify(modelStatus(), null, 2),
@@ -2743,12 +2913,20 @@ export default function (pi: ExtensionAPI) {
     }),
     write: (value) => current().store.set("reconnect", value),
     retryAllowed: () => current().canRetryLeadRequest(),
+    enabled: () => !simpleMode(),
   });
   installProject(pi, current);
   pi.registerCommand("stop", {
     description:
       "Stop the main run and this mission's task tree; preserve identities and history.",
     handler: async (_args, context) => {
+      if (simpleMode()) {
+        context.ui.notify(
+          "Starhelm simple mode is active; use /starhelm complex first.",
+          "warning",
+        );
+        return;
+      }
       pi.events.emit("mission-control:interrupt", { reason: "User stop" });
       if (current().store.mission()) await current().userControl("stop");
       if (!context.isIdle()) context.abort();

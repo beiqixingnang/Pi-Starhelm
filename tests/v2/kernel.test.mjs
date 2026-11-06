@@ -117,6 +117,20 @@ async function using(fn) {
   }
 }
 
+test("suspended Starhelm maintenance stays idle until complex mode resumes it", () =>
+  using(async (h) => {
+    h.kernel.start();
+    assert.ok(h.kernel.timer);
+    const changes = h.changes;
+    h.kernel.suspend();
+    assert.equal(h.kernel.timer, undefined);
+    await h.kernel.tick();
+    assert.equal(h.changes, changes);
+    h.kernel.resume();
+    assert.ok(h.kernel.timer);
+  }),
+);
+
 test("Escape settles running, queued and descendant work while retaining the paused goal, budgets, artifacts and reminders", () =>
   using(async (h) => {
     h.idle(false);
