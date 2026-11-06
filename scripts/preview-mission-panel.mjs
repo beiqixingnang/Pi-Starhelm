@@ -3,13 +3,10 @@ import fs from "node:fs";
 import os from "node:os";
 import path from "node:path";
 import { pathToFileURL } from "node:url";
-import { hostDir } from "./host.mjs";
+import { hostDir, hostDependencyDir } from "./host.mjs";
 
 const root = process.cwd();
-const tuiPath = path.join(
-  hostDir,
-  "node_modules/@earendil-works/pi-tui/dist/index.js",
-);
+const tuiPath = path.join(hostDependencyDir("@earendil-works/pi-tui"), "dist/index.js");
 const {
   TuiAltScreen,
   VStack,
@@ -19,7 +16,7 @@ const {
   stripTerminalSequences,
 } = await import(pathToFileURL(tuiPath));
 const { createJiti } = await import(
-  pathToFileURL(path.join(hostDir, "node_modules/jiti/lib/jiti.mjs"))
+  pathToFileURL(path.join(hostDependencyDir("jiti"), "lib/jiti.mjs"))
 );
 const jiti = createJiti(import.meta.url, {
   alias: { "@earendil-works/pi-tui": tuiPath },

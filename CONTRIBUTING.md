@@ -6,7 +6,7 @@ Do not patch the installed Pi program, replace native component prototypes, or u
 
 ## Before opening a change
 
-Run the offline checks with Node.js 24 or newer and a local Pi 1.4.0 installation:
+Run the offline checks with Node.js 24 or newer and a local Pi 1.5.0 installation (the current verification baseline):
 
 ```bash
 npm run check

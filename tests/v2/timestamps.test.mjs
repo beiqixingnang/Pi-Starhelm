@@ -2,19 +2,16 @@ import test from "node:test";
 import assert from "node:assert/strict";
 import { pathToFileURL } from "node:url";
 import path from "node:path";
-import { hostDir } from "../../scripts/host.mjs";
+import { hostDir, hostDependencyDir } from "../../scripts/host.mjs";
 import { readTime, formatTime, formatDuration } from "../../runtime/time.ts";
 import { publicEntry } from "../../runtime/public.ts";
 import { WorkerPublicStream } from "../../runtime/rpc-worker.ts";
 const { createJiti } = await import(
-  pathToFileURL(path.join(hostDir, "node_modules/jiti/lib/jiti.mjs"))
+  pathToFileURL(path.join(hostDependencyDir("jiti"), "lib/jiti.mjs"))
 );
 const jiti = createJiti(import.meta.url, {
   alias: {
-    "@earendil-works/pi-tui": path.join(
-      hostDir,
-      "node_modules/@earendil-works/pi-tui/dist/index.js",
-    ),
+    "@earendil-works/pi-tui": path.join(hostDependencyDir("@earendil-works/pi-tui"), "dist/index.js"),
   },
 });
 const { conversationItems } = await jiti.import(

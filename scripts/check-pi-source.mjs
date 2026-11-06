@@ -10,8 +10,8 @@ const metadata = JSON.parse(
   fs.readFileSync(path.join(root, "vendor/pi-source.json"), "utf8"),
 );
 const source = path.join(root, "vendor", metadata.snapshot);
-if (metadata.version !== "1.4.0" || metadata.snapshot !== "pi-1.4.0")
-  throw new Error("Expected the Pi1.4.0 source reference");
+if (metadata.version !== "1.5.0" || metadata.snapshot !== "pi-1.5.0")
+  throw new Error("Expected the Pi1.5.0 source reference");
 const entries = [];
 function walk(directory, relative = "") {
   for (const entry of fs.readdirSync(directory, { withFileTypes: true })) {

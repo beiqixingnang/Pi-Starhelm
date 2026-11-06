@@ -2,7 +2,7 @@ import fs from "node:fs";
 import path from "node:path";
 import { fileURLToPath } from "node:url";
 import ts from "typescript";
-import { hostDir } from "./host.mjs";
+import { hostDir, hostDependencyDir } from "./host.mjs";
 const root = path.resolve(path.dirname(fileURLToPath(import.meta.url)), ".."),
   paths = {};
 for (const name of [
@@ -15,7 +15,7 @@ for (const name of [
   const directory =
     name === "@earendil-works/pi-coding-agent"
       ? hostDir
-      : path.join(hostDir, "node_modules", name);
+      : hostDependencyDir(name);
   const manifest = JSON.parse(
     fs.readFileSync(path.join(directory, "package.json"), "utf8"),
   );

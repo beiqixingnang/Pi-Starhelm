@@ -5,10 +5,10 @@ import os from 'node:os';
 import path from 'node:path';
 import {createRequire} from 'node:module';
 import {fileURLToPath,pathToFileURL} from 'node:url';
-import {hostDir} from '../../../scripts/host.mjs';
+import { hostDir, hostDependencyDir } from '../../../scripts/host.mjs';
 const image=process.env.PI_SANDBOX_TEST_IMAGE;
 const require=createRequire(path.join(hostDir,'package.json'));
-const {createJiti}=await import(pathToFileURL(path.join(hostDir,'node_modules/jiti/lib/jiti.mjs')));
+const {createJiti}=await import(pathToFileURL(path.join(hostDependencyDir("jiti"), "lib/jiti.mjs")));
 const jiti=createJiti(import.meta.url,{alias:{typebox:require.resolve('typebox'),'@earendil-works/pi-coding-agent':path.join(hostDir,'dist/index.js')}});
 const {runSandbox}=await jiti.import(path.resolve(path.dirname(fileURLToPath(import.meta.url)),'../sandbox.ts'));
 async function fixture(fn){const base=fs.realpathSync.native(fs.mkdtempSync(path.join(os.tmpdir(),'pi-podman-smoke-')));const root=path.join(base,'project'),extra=path.join(base,'reference');fs.mkdirSync(root);fs.mkdirSync(extra);fs.writeFileSync(path.join(root,'input.txt'),'INPUT');fs.writeFileSync(path.join(extra,'reference.txt'),'REFERENCE');const policy={root,access:'read-write',extraReadRoots:[extra],execution:'sandbox',sandbox:{engine:'podman',image,cpus:1,memoryMb:512,maxSeconds:30}};try{await fn(policy);}finally{fs.rmSync(base,{recursive:true,force:true});}}

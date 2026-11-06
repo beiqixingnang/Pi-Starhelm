@@ -5,10 +5,10 @@ import os from 'node:os';
 import path from 'node:path';
 import {fileURLToPath,pathToFileURL} from 'node:url';
 import {createRequire} from 'node:module';
-import {hostDir} from './host.mjs';
+import { hostDir, hostDependencyDir } from './host.mjs';
 const root=path.resolve(path.dirname(fileURLToPath(import.meta.url)),'..');
 const require=createRequire(path.join(hostDir,'package.json'));
-const {createJiti}=await import(pathToFileURL(path.join(hostDir,'node_modules/jiti/lib/jiti.mjs')));
+const {createJiti}=await import(pathToFileURL(path.join(hostDependencyDir("jiti"), "lib/jiti.mjs")));
 const jiti=createJiti(import.meta.url,{alias:{'@earendil-works/pi-coding-agent':path.join(hostDir,'dist/index.js'),typebox:require.resolve('typebox')}});
 const {discoverAgents}=await jiti.import(path.join(root,'extensions/subagent/agents.ts'));
 

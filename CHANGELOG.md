@@ -1,5 +1,6 @@
 # 2.18.0 — bounded waits and complete acceptance queues (2026-11-05)
 
+- Verify Pi 1.5.0 and update the unmodified vendor reference, dependency lock and CI host baseline. Resolve verification/preview dependencies from the selected host under both nested and hoisted npm layouts; retain the compatible `^1.4.0` peer ranges.
 - Reject interactive `mission_wait`/`goal_wait` when every managed task is terminal and no external wait exists; return an actionable queue-oriented error instead of allowing the lead to idle.
 - Add read-only `goal_review_queue` with categorized counts for accepted, current submissions, missing submissions, blocked, planned and awaiting-work goals.
 - Add independent `goal_accept_batch` attempts for up to 100 exact goal revisions. Each item keeps the existing evidence, revision and settled-work fences and returns accepted/rejected results without hiding partial failures.

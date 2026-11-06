@@ -6,7 +6,7 @@
 import fs from "node:fs";
 import path from "node:path";
 import { pathToFileURL } from "node:url";
-import { hostDir } from "./host.mjs";
+import { hostDir, hostDependencyDir } from "./host.mjs";
 import { estimateSummaryTokens } from "../runtime/summarize.ts";
 const args = Object.fromEntries(
   process.argv
@@ -40,7 +40,7 @@ const {
   SettingsManager,
 } = await import(pathToFileURL(path.join(hostDir, "dist/index.js")));
 const { Type } = await import(
-  pathToFileURL(path.join(hostDir, "node_modules/typebox/build/index.mjs"))
+  pathToFileURL(path.join(hostDependencyDir("typebox"), "build/index.mjs"))
 );
 const lockFd = fs.openSync(lock, "wx");
 fs.writeFileSync(lockFd, String(process.pid));

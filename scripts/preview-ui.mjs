@@ -2,9 +2,9 @@
 import fs from 'node:fs/promises';
 import path from 'node:path';
 import {fileURLToPath,pathToFileURL} from 'node:url';
-import {hostDir} from './host.mjs';
+import { hostDir, hostDependencyDir } from './host.mjs';
 const root=path.resolve(path.dirname(fileURLToPath(import.meta.url)),'..');
-const {TuiAltScreen,VStack,Text,Container,ScrollView,stripTerminalSequences}=await import(pathToFileURL(path.join(hostDir,'node_modules/@earendil-works/pi-tui/dist/index.js')));
+const {TuiAltScreen,VStack,Text,Container,ScrollView,stripTerminalSequences}=await import(pathToFileURL(path.join(hostDependencyDir("@earendil-works/pi-tui"), "dist/index.js")));
 const {loadExtensions,createExtensionRuntime}=await import(pathToFileURL(path.join(hostDir,'dist/core/extensions/loader.js')));
 const {createEventBus}=await import(pathToFileURL(path.join(hostDir,'dist/core/event-bus.js')));
 const terminal={columns:180,rows:42,kittyProtocolActive:false,start(){},stop(){},write(){},hideCursor(){},showCursor(){},clearLine(){},clearFromCursor(){},clearScreen(){},setTitle(){},setProgress(){},setProgramStatus(){},moveBy(){},async drainInput(){}};

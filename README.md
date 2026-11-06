@@ -12,7 +12,7 @@
 
 2.5.2 兼容历史工具的空游标占位：首次搜索可以省略 `cursor`，或传空字符串/null；非空游标必须使用工具返回的 `nextCursor`。读取被排除的记忆工具回执时会明确提示改查原始消息，不再误报成记录丢失；无需重建历史索引。
 
-需要 **Node.js 24+、Pi 1.4.0+（1.x）**；当前安装、依赖锁文件、源码快照和 CI 均以 **Pi1.4.0** 为基线，停止维护 1.3 兼容。Pi 1.4.0 升级验证覆盖 Windows / Node24、WSL / Node24 和 WSL 原有 Node22，以及专用会话的同进程 `/reload`；见 [1.4.0 兼容记录](docs/design/mission-control-v2/PI-1.4.0-2026-10-22.md)。此前另做过原生HTML导出、host命令/进程树和本机Podman验证；本轮未运行需镜像的容器用例。离线provider测试不等于真实模型兼容性认证。
+需要 **Node.js 24+、Pi 1.4.0+（1.x）**；当前源码快照、依赖锁文件和 CI 升级为 **Pi1.5.0** 基线，peer 范围仍保留 `^1.4.0`。1.5.0 的工具参数校验改用 pi-schema；本包使用可兼容的 JSON Schema/TypeBox 子集。Windows / Node24、WSL / Node22 的隔离回归和专用会话同进程 `/reload` 结果见 [1.5.0 兼容记录](docs/design/mission-control-v2/PI-1.5.0-2026-11-06.md)。需本机容器镜像的测试仍为可选，离线 provider 不等于真实模型服务认证。
 
 ## 安装与切换
 

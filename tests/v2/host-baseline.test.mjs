@@ -11,7 +11,7 @@ test("verification refuses a stale Pi host instead of silently testing against 1
   try {
     fs.mkdirSync(path.join(directory, "dist"));
     fs.writeFileSync(path.join(directory, "dist/index.js"), "export {};\n");
-    for (const version of ["1.3.0", "1.4.0", "2.0.0"]) {
+    for (const version of ["1.3.0", "1.4.0", "1.5.0", "2.0.0"]) {
       fs.writeFileSync(
         path.join(directory, "package.json"),
         JSON.stringify({ version }),
@@ -29,7 +29,7 @@ test("verification refuses a stale Pi host instead of silently testing against 1
           windowsHide: true,
         },
       );
-      if (version === "1.4.0") {
+      if (version === "1.4.0" || version === "1.5.0") {
         assert.equal(result.status, 0, result.stderr);
         assert.equal(result.stdout.trim(), version);
       } else {
@@ -43,5 +43,53 @@ test("verification refuses a stale Pi host instead of silently testing against 1
     }
   } finally {
     fs.rmSync(directory, { recursive: true, force: true });
+  }
+});
+
+test("host dependencies resolve from nested and hoisted npm layouts even with import-only exports", () => {
+  const root = fs.mkdtempSync(path.join(os.tmpdir(), "mc-host-layout-"));
+  try {
+    const host = path.join(
+      root,
+      "node_modules/@earendil-works/pi-coding-agent",
+    );
+    fs.mkdirSync(path.join(host, "dist"), { recursive: true });
+    fs.writeFileSync(
+      path.join(host, "package.json"),
+      JSON.stringify({ version: "1.5.0" }),
+    );
+    fs.writeFileSync(path.join(host, "dist/index.js"), "export {};\n");
+    for (const modules of [
+      path.join(host, "node_modules"),
+      path.join(root, "node_modules"),
+    ]) {
+      const dependency = path.join(modules, "@earendil-works/pi-tui");
+      fs.mkdirSync(dependency, { recursive: true });
+      fs.writeFileSync(
+        path.join(dependency, "package.json"),
+        JSON.stringify({
+          name: "@earendil-works/pi-tui",
+          exports: { ".": { import: "./index.js" } },
+        }),
+      );
+      const result = spawnSync(
+        process.execPath,
+        [
+          "--input-type=module",
+          "-e",
+          `import {hostDependencyDir} from ${JSON.stringify(pathToFileURL(path.resolve("scripts/host.mjs")).href)}; console.log(hostDependencyDir("@earendil-works/pi-tui"))`,
+        ],
+        {
+          env: { ...process.env, PI_TEST_PACKAGE_DIR: host },
+          encoding: "utf8",
+          windowsHide: true,
+        },
+      );
+      assert.equal(result.status, 0, result.stderr);
+      assert.equal(result.stdout.trim(), dependency);
+      fs.rmSync(dependency, { recursive: true, force: true });
+    }
+  } finally {
+    fs.rmSync(root, { recursive: true, force: true });
   }
 });

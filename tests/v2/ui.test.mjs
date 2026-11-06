@@ -4,17 +4,14 @@ import fs from "node:fs";
 import os from "node:os";
 import path from "node:path";
 import { pathToFileURL } from "node:url";
-import { hostDir } from "../../scripts/host.mjs";
+import { hostDir, hostDependencyDir } from "../../scripts/host.mjs";
 import { MissionKernel } from "../../runtime/kernel.ts";
 const { createJiti } = await import(
-  pathToFileURL(path.join(hostDir, "node_modules/jiti/lib/jiti.mjs"))
+  pathToFileURL(path.join(hostDependencyDir("jiti"), "lib/jiti.mjs"))
 );
 const jiti = createJiti(import.meta.url, {
   alias: {
-    "@earendil-works/pi-tui": path.join(
-      hostDir,
-      "node_modules/@earendil-works/pi-tui/dist/index.js",
-    ),
+    "@earendil-works/pi-tui": path.join(hostDependencyDir("@earendil-works/pi-tui"), "dist/index.js"),
   },
 });
 const { board } = await jiti.import(
@@ -28,7 +25,7 @@ const { GoalPanel } = await jiti.import(
 );
 const { visibleWidth } = await import(
   pathToFileURL(
-    path.join(hostDir, "node_modules/@earendil-works/pi-tui/dist/index.js"),
+    path.join(hostDependencyDir("@earendil-works/pi-tui"), "dist/index.js"),
   )
 );
 

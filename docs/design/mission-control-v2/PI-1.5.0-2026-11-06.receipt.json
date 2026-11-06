@@ -1,0 +1,34 @@
+{
+  "date": "2026-11-06",
+  "candidate": {
+    "branch": "codex/pi-1-5-baseline",
+    "baseCommit": "29e94ec014a2103ef078e80cf370f731ff7c4ad5"
+  },
+  "pi": {
+    "version": "1.5.0",
+    "tag": "v1.5.0",
+    "commit": "f9a26365568127461c47a07a37dcb42c140a3ac5",
+    "archiveSha256": "1015146ce05a9219a0256861013633b10609668c6d14187fc8f47f540befaea3",
+    "normalizedTreeSha256": "c3a41122b1f5b3102d1bc7ec91bb4e7ddeda88309153ae92b023a37241e73fe6",
+    "sourceFiles": 2949,
+    "sourceBytes": 34603541
+  },
+  "compatibility": {
+    "peerRange": "^1.4.0",
+    "hostRange": ">=1.4.0 <2",
+    "schemaValidation": "Pi 1.5 pi-schema-compatible JSON Schema subset"
+  },
+  "tests": {
+    "windows": {"node": "24.16.0", "pi": "1.5.0", "total": 443, "passed": 438, "skipped": 5, "failed": 0, "typecheckedFiles": 52},
+    "wsl": {"node": "22.23.3", "pi": "1.5.0", "total": 443, "passed": 436, "skipped": 7, "failed": 0, "typecheckedFiles": 52},
+    "tui": {"sameProcessReload": true, "manualRecoveryChecks": 282, "portableTransferChecks": 288, "passed": true}
+  },
+  "installation": {
+    "windowsPiUpgraded": true,
+    "pluginInstalled": true,
+    "duplicateRegistrationRemoved": true,
+    "productionConversationTouched": false,
+    "restartRequiredForHostUpgrade": true
+  },
+  "initialHarnessIssue": "Hoisted dependencies in the isolated WSL npm prefix were not found by the old hostDir/node_modules lookup; resolver and tests were corrected, then the suite passed without temporary links."
+}

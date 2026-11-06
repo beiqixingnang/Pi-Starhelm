@@ -4,12 +4,12 @@ import fs from "node:fs";
 import path from "node:path";
 import os from "node:os";
 import { pathToFileURL } from "node:url";
-import { hostDir } from "../../scripts/host.mjs";
+import { hostDir, hostDependencyDir } from "../../scripts/host.mjs";
 import { MissionKernel } from "../../runtime/kernel.ts";
 import { ContextMemory } from "../../runtime/context-memory.ts";
 import { mappedPath } from "../../runtime/path-mapping.ts";
 const { createJiti } = await import(
-  pathToFileURL(path.join(hostDir, "node_modules/jiti/lib/jiti.mjs"))
+  pathToFileURL(path.join(hostDependencyDir("jiti"), "lib/jiti.mjs"))
 );
 const jiti = createJiti(import.meta.url, {
   alias: {

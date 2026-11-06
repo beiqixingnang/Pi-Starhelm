@@ -45,8 +45,25 @@ if (!hostDir)
 export const hostVersion = JSON.parse(
   fs.readFileSync(path.join(hostDir, "package.json"), "utf8"),
 ).version;
+// npm may hoist the host's dependencies beside it in prefix installs.
+// Resolve from the selected host instead of requiring a nested node_modules.
+const hostRequire = createRequire(path.join(hostDir, "package.json"));
+export function hostDependencyDir(name) {
+  // Resolving package.json or "." through require() can be blocked for an
+  // import-only package. Search Node's own host lookup roots and verify identity.
+  for (const modules of hostRequire.resolve.paths(name) ?? []) {
+    const directory = path.join(modules, name);
+    const manifest = path.join(directory, "package.json");
+    if (
+      fs.existsSync(manifest) &&
+      JSON.parse(fs.readFileSync(manifest, "utf8")).name === name
+    )
+      return directory;
+  }
+  throw new Error("Cannot locate host dependency: " + name);
+}
 const version = /^(\d+)\.(\d+)\.(\d+)$/.exec(hostVersion);
 if (!version || Number(version[1]) !== 1 || Number(version[2]) < 4)
   throw new Error(
-    `Pi >=1.4.0 <2 is required; found ${hostVersion} at ${hostDir}. Upgrade this host or point PI_TEST_PACKAGE_DIR to Pi1.4.0.`,
+    `Pi >=1.4.0 <2 is required; found ${hostVersion} at ${hostDir}. Upgrade this host or point PI_TEST_PACKAGE_DIR to the tested Pi1.5.0 baseline.`,
   );
