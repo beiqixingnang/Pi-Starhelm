@@ -8,6 +8,7 @@ import type {
   WorkerEvent,
   WorkerFactory,
   WorkerOutcome,
+  WorkerStage,
 } from "./types.ts";
 import {
   rpcRecords,
@@ -199,6 +200,20 @@ export function workerEnvironment(assignment: Assignment) {
   env.NODE_NO_WARNINGS = "1";
   return env;
 }
+export function writeRpcLine(
+  stdin: {
+    write(line: string, callback: (error?: Error | null) => void): unknown;
+  },
+  line: string,
+): Promise<void> {
+  return new Promise((resolve, reject) => {
+    try {
+      stdin.write(line, (error) => (error ? reject(error) : resolve()));
+    } catch (error) {
+      reject(error);
+    }
+  });
+}
 export async function killTree(pid: number) {
   if (process.platform === "win32") {
     await new Promise<void>((resolve, reject) =>
@@ -292,6 +307,9 @@ export function createWorkerFactory(
       detached: process.platform !== "win32",
       windowsHide: true,
     });
+    const stage = (value: WorkerStage) =>
+      onEvent({ type: "stage", stage: value, timestamp: Date.now() });
+    child.once("spawn", () => stage("process_spawned"));
     const pending = new Map<
       string,
       {
@@ -339,13 +357,13 @@ export function createWorkerFactory(
         }, timeoutMs);
         timer.unref?.();
         pending.set(id, { resolve, reject, timer });
-        child.stdin.write(JSON.stringify({ ...body, id }) + "\n", (error) => {
-          if (error) {
-            clearTimeout(timer);
-            pending.delete(id);
-            reject(error);
-          }
-        });
+        void writeRpcLine(child.stdin, JSON.stringify({ ...body, id }) + "\n").catch(
+          (error) => {
+          clearTimeout(timer);
+          pending.delete(id);
+          reject(error);
+          },
+        );
       });
     const stop = async () => {
       if (stopping) {
@@ -380,6 +398,7 @@ export function createWorkerFactory(
       settled = true;
       signal.removeEventListener("abort", abort);
       await stop();
+      stage("worker_settled");
       cleanupRequests(new Error("Worker settled"));
       resolveResult({
         ok: ok && !signal.aborted && !unknown,
@@ -444,7 +463,23 @@ export function createWorkerFactory(
         }
         return;
       }
-      if (event.type === "agent_start") started = true;
+      if (event.type === "agent_start") {
+        started = true;
+        stage("agent_started");
+      }
+      if (event.type === "turn_start") stage("model_turn_started");
+      if (
+        event.type === "message_start" &&
+        event.message?.role === "assistant"
+      )
+        stage("first_response");
+      if (
+        event.type === "message_update" &&
+        ["text_start", "text_delta"].includes(
+          event.assistantMessageEvent?.type,
+        )
+      )
+        stage("first_text");
       const preview = publicStream.accept(event);
       if (preview) onEvent(preview);
       if (event.type === "message_end" && event.message?.role === "assistant") {
@@ -496,6 +531,7 @@ export function createWorkerFactory(
     void (async () => {
       try {
         const state = await send({ type: "get_state" });
+        stage("rpc_ready");
         if (state?.sessionFile) {
           sessionFile = state.sessionFile;
           onEvent({ type: "session", sessionFile });
@@ -505,6 +541,7 @@ export function createWorkerFactory(
           { type: "prompt", message: assignment.prompt },
           15000,
         );
+        stage("prompt_accepted");
         if (data?.disposition === "handled") {
           lastError = "Worker prompt was handled without running";
           await finish(false);

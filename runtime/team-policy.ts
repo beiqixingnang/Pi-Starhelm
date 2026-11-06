@@ -13,7 +13,34 @@ export function taskView(task: Task) {
     continuation: _continuation,
     ...view
   } = task;
-  return { ...view, capabilityRevision: capabilitySnapshot?.revision };
+  const elapsed = (start?: number, end?: number) =>
+    start === undefined || end === undefined || end < start
+      ? undefined
+      : end - start;
+  const trace = task.workerTrace;
+  return {
+    ...view,
+    capabilityRevision: capabilitySnapshot?.revision,
+    workerTraceDurationsMs: trace
+      ? {
+          startup: elapsed(trace.process_spawned, trace.rpc_ready),
+          promptAcceptance: elapsed(trace.rpc_ready, trace.prompt_accepted),
+          acceptedToAgentStart: elapsed(
+            trace.prompt_accepted,
+            trace.agent_started,
+          ),
+          turnToFirstResponse: elapsed(
+            trace.model_turn_started,
+            trace.first_response,
+          ),
+          responseToFirstText: elapsed(trace.first_response, trace.first_text),
+          processLifetime: elapsed(
+            trace.process_spawned,
+            trace.worker_settled,
+          ),
+        }
+      : undefined,
+  };
 }
 
 export function rebaseReviewHolds(

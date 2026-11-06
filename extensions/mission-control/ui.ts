@@ -1,6 +1,5 @@
 import { truncateToWidth, visibleWidth } from "@earendil-works/pi-tui";
 import { cleanText } from "../../runtime/public.ts";
-import { memberTask } from "../../runtime/roster.ts";
 import type { Mission, Recovery } from "../../runtime/types.ts";
 import type { MissionKernel } from "../../runtime/kernel.ts";
 import { panelLine, type UiTheme } from "./presentation.ts";
@@ -67,12 +66,12 @@ export function board(
   theme?: UiTheme,
   terminalRows = 30,
 ): string[] {
-  const s = kernel.snapshot(),
+  const s = kernel.dashboardSnapshot(12, true),
     m = s.mission;
   const limit = expanded
     ? 100
     : Math.max(4, Math.min(10, Math.floor(terminalRows / 3)));
-  const held = s.held || m?.humanPaused || kernel.store.get("relocationHold");
+  const held = s.held || m?.humanPaused || s.workspaceHeld;
   const due = (time: number) =>
     time <= Date.now()
       ? "已到期"
@@ -82,7 +81,7 @@ export function board(
     .sort((a, b) => a.nextAt - b.nextAt || a.id.localeCompare(b.id));
   const memberRows = s.members
     .map((member) => {
-      const task = memberTask(member, s.tasks);
+      const task = s.memberTasks[member.id];
       const activity = kernel.store.get<{ tool?: string }>(
         `activity:${member.id}`,
       );
@@ -137,13 +136,7 @@ export function board(
         a.name.localeCompare(b.name) ||
         a.id.localeCompare(b.id),
     );
-  const goals = kernel.store
-    .goals()
-    .filter(
-      (goal) =>
-        !goal.parentId &&
-        !["accepted", "cancelled", "skipped"].includes(goal.state),
-    )
+  const goals = s.goalRoots
     .map((goal) => (goal.id === m?.id ? m : kernel.store.savedMission(goal.id)))
     .filter((goal): goal is Mission =>
       Boolean(
@@ -155,7 +148,9 @@ export function board(
     .sort((a, b) => Number(b.id === m?.id) - Number(a.id === m?.id));
   const goalRows = goals.slice(0, Math.max(1, limit - 3)).map((goal) => {
     const selected = goal.id === m?.id;
-    const progress = selected ? s.goals : kernel.goals.summary(goal.id);
+    const progress =
+      (selected ? s.goals : s.goalSummaries[goal.id]) ??
+      kernel.goals.summary(goal.id);
     return {
       category: "目标",
       name: goal.objective,
@@ -227,7 +222,7 @@ export function board(
   );
   const hiddenGoals = Math.max(
     0,
-    goals.length -
+    s.goalRootCount -
       goalsShown.filter(
         (row) => row.category === "目标" && row.status !== "就绪",
       ).length,

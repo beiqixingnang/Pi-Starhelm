@@ -889,3 +889,25 @@ test("legacy v2 SQLite upgrades in place without losing identity, evidence, hold
     await h.reload();
     assert.equal(h.kernel.goals.node(before.id).state, "accepted");
   }));
+
+test("acceptance queue loads mission tasks once for a large goal tree", () =>
+  using(async ({ kernel }) => {
+    const root = kernel.setGoal("Large queue fixture", ["Review results"]);
+    kernel.planGoals(
+      Array.from({ length: 80 }, (_, index) => ({
+        parentId: root.id,
+        objective: `Queue item ${index}`,
+        criteria: ["Inspect its exact result"],
+      })),
+    );
+    const original = kernel.store.missionTasks.bind(kernel.store);
+    let reads = 0;
+    kernel.store.missionTasks = (id) => {
+      reads++;
+      return original(id);
+    };
+    const queue = kernel.goals.reviewQueue(root.id, undefined, 0, 20);
+    assert.equal(queue.total, 81);
+    assert.equal(queue.entries.length, 20);
+    assert.equal(reads, 1);
+  }));

@@ -1,3 +1,12 @@
+# 2.18.1 — bounded dashboard state and worker diagnostics (2026-11-06)
+
+- Normalize explicit `null` in optional `goalIds` before delegation validation; keep child-level omission consistent with inherited task defaults.
+- Render the bottom board and team workbench from bounded roster queries, cache goal summaries by database revision, and avoid redraws for maintenance ticks that wrote no state. Poll conversation files only while viewing a conversation and redraw only when its visible data changes.
+- Detect and transactionally migrate legacy task tables to indexed mission/member/archive columns on open; after migration every task read uses the same indexed layout. Page state before parsing large result sets and build acceptance-queue task counts from one mission query.
+- Persist member worker milestones from process spawn through RPC readiness, prompt acceptance, Pi turn start, first response/text and process settlement. Keep model-turn timing distinct from the exact provider HTTP send, which Pi's public RPC stream does not expose.
+- Supersede idle-continuation notices as soon as new work is dispatched and reject any continuation whose mission now has active tasks.
+- Cover nullable delegation, task-table migration/query plans, queue lookup count, idle redraws, stale continuation delivery and staged RPC failures.
+
 # 2.18.0 — bounded waits and complete acceptance queues (2026-11-05)
 
 - Verify Pi 1.5.0 and update the unmodified vendor reference, dependency lock and CI host baseline. Resolve verification/preview dependencies from the selected host under both nested and hoisted npm layouts; retain the compatible `^1.4.0` peer ranges.

@@ -1117,6 +1117,13 @@ export class GoalLedger {
     if (!Number.isSafeInteger(limit) || limit < 1 || limit > 100)
       throw new Error("reviewQueue limit must be between 1 and 100");
     const nodes = this.store.goals(rootId);
+    const tasksByGoal = new Map<string, Task[]>();
+    for (const task of this.store.missionTasks(rootId))
+      for (const goalId of taskGoalIds(task)) {
+        const tasks = tasksByGoal.get(goalId) ?? [];
+        tasks.push(task);
+        tasksByGoal.set(goalId, tasks);
+      }
     const classify = (goal: GoalNode) => {
       if (goal.state === "accepted" && goal.acceptanceId)
         return "accepted" as const;
@@ -1141,9 +1148,7 @@ export class GoalLedger {
         const submission = goal.submissionId
           ? this.store.goalSubmission(goal.submissionId)
           : undefined;
-        const tasks = this.store
-          .missionTasks(rootId)
-          .filter((task) => taskGoalIds(task).includes(goal.id));
+        const tasks = tasksByGoal.get(goal.id) ?? [];
         return {
           id: goal.id,
           rootId: goal.rootId,

@@ -3,6 +3,7 @@ import assert from "node:assert/strict";
 import fs from "node:fs";
 import os from "node:os";
 import path from "node:path";
+import { DatabaseSync } from "node:sqlite";
 import { MissionKernel } from "../../runtime/kernel.ts";
 import { Store } from "../../runtime/store.ts";
 
@@ -13,7 +14,8 @@ const flush = async () => {
 function harness() {
   const directory = fs.mkdtempSync(path.join(os.tmpdir(), "mc-v2-kernel-"));
   let now = 100000,
-    idle = true;
+    idle = true,
+    changes = 0;
   const wakes = [],
     notices = [],
     workers = [];
@@ -30,6 +32,7 @@ function harness() {
         idle = false;
       },
       notify: (n) => notices.push(n),
+      onChange: () => changes++,
       workerFactory: async (assignment, signal) => {
         let resolve;
         const result = new Promise((r) => {
@@ -84,6 +87,9 @@ function harness() {
     add,
     get kernel() {
       return kernel;
+    },
+    get changes() {
+      return changes;
     },
     advance(ms) {
       now += ms;
@@ -1300,3 +1306,106 @@ test("a new natural-language human delegation resolves the exact decision withou
     assert.equal(resolved.budgetStartedAt, m.budgetStartedAt);
     assert.match(h.kernel.context(), /goal_submit records pending evidence/);
   }));
+
+test("maintenance refreshes only after a persisted state change", () =>
+  using(async (h) => {
+    h.kernel.setGoal("Idle refresh fixture", ["No-op ticks stay quiet"]);
+    const before = h.changes;
+    await h.kernel.tick();
+    assert.equal(h.changes, before);
+    h.advance(1500);
+    await h.kernel.tick();
+    assert.ok(h.changes > before);
+    assert.ok(
+      h.kernel.store
+        .deliveries("lead")
+        .some((delivery) => delivery.kind === "continue"),
+    );
+  }));
+
+test("dispatch immediately supersedes an idle continuation notice", () =>
+  using(async (h) => {
+    h.idle(false);
+    h.kernel.setGoal("Continuation race fixture", ["Finish after dispatch"]);
+    const mission = h.kernel.store.mission();
+    mission.nextContinueAt = 100000;
+    h.kernel.store.set("mission", mission);
+    await h.kernel.tick();
+    const notice = h.kernel
+      .store
+      .deliveries("lead")
+      .find((delivery) => delivery.kind === "continue");
+    assert.ok(notice);
+    assert.equal(h.kernel.validLeadDelivery(notice), true);
+    h.add("worker");
+    h.kernel.dispatch("worker", "A new approved task replaced the idle state");
+    const stale = h.kernel
+      .store
+      .deliveries("lead")
+      .find((delivery) => delivery.id === notice.id);
+    assert.equal(stale.state, "superseded");
+    assert.equal(h.kernel.validLeadDelivery(stale), false);
+  }));
+
+test("legacy task rows keep their layout and use indexed mission lookup", () => {
+  const directory = fs.mkdtempSync(path.join(os.tmpdir(), "mc-legacy-task-index-"));
+  const database = new DatabaseSync(path.join(directory, "state.sqlite"));
+  database.exec(`
+    CREATE TABLE meta(key TEXT PRIMARY KEY,data TEXT NOT NULL);
+    INSERT INTO meta VALUES('schema','2');
+    CREATE TABLE tasks(id TEXT PRIMARY KEY,member TEXT NOT NULL,parent TEXT,state TEXT NOT NULL,created INTEGER NOT NULL,data TEXT NOT NULL);
+  `);
+  const legacy = {
+    id: "legacy-task",
+    missionId: "legacy-mission",
+    memberId: "legacy-member",
+    member: "worker",
+    state: "completed",
+    createdAt: 10,
+    phase: "work",
+  };
+  database
+    .prepare("INSERT INTO tasks VALUES(?,?,?,?,?,?)")
+    .run(legacy.id, legacy.memberId, null, legacy.state, legacy.createdAt, JSON.stringify(legacy));
+  const archivedLegacy = {
+    ...legacy,
+    id: "legacy-archived-task",
+    archivedAt: 20,
+    createdAt: 20,
+  };
+  database
+    .prepare("INSERT INTO tasks VALUES(?,?,?,?,?,?)")
+    .run(archivedLegacy.id, archivedLegacy.memberId, null, archivedLegacy.state, archivedLegacy.createdAt, JSON.stringify(archivedLegacy));
+  database.close();
+  const store = new Store(directory);
+  try {
+    assert.equal(store.missionTasks("legacy-mission")[0].id, legacy.id);
+    assert.equal(store.taskPage(10).total, 1);
+    assert.equal(store.tasks().length, 1);
+    assert.equal(store.tasks(false, true).length, 2);
+    assert.equal(
+      store.db.prepare("PRAGMA table_info(tasks)").all().length,
+      8,
+    );
+    assert.equal(
+      store.db.prepare("SELECT mission FROM tasks WHERE id=?").get(legacy.id)
+        .mission,
+      "legacy-mission",
+    );
+    assert.equal(
+      store.db
+        .prepare("SELECT archived FROM tasks WHERE id=?")
+        .get(archivedLegacy.id).archived,
+      1,
+    );
+    const plan = store.db
+      .prepare(
+        "EXPLAIN QUERY PLAN SELECT data FROM tasks WHERE mission=? ORDER BY created,id",
+      )
+      .all("legacy-mission");
+    assert.match(JSON.stringify(plan), /task_mission_created/);
+  } finally {
+    store.close();
+    fs.rmSync(directory, { recursive: true, force: true });
+  }
+});

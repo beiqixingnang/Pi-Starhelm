@@ -101,6 +101,55 @@ test("workspace pause has one accurate status and a manual resume command in com
     assert.doesNotMatch(board(kernel, 160).join("\n"), /迁移后待恢复/);
   }));
 
+test("dashboard rendering uses bounded roster data instead of a full task snapshot", () =>
+  withRoster(async ({ kernel, add, dir }) => {
+    kernel.setGoal("Dashboard fixture", ["Keep the compact status current"]);
+    const member = add("dashboard-worker");
+    kernel.store.putTask({
+      id: "dashboard-completed-task",
+      missionId: kernel.store.mission().id,
+      memberId: member.id,
+      member: member.name,
+      state: "completed",
+      epoch: 1,
+      phase: "work",
+      inputPath: path.join(dir, "artifacts", "unused-input.txt"),
+      createdAt: 1,
+      updatedAt: 1,
+      finishedAt: 2,
+      timeoutMs: 0,
+      processState: "stopped",
+      reviewDeliveryIds: [],
+    });
+    kernel.snapshot = () => {
+      throw new Error("dashboard requested the full snapshot");
+    };
+    const lines = board(kernel, 160, false, undefined, 42).join("\n");
+    assert.match(lines, /dashboard-worker\s+│ 完成/);
+    assert.match(lines, /Dashboard fixture/);
+  }));
+
+test("team workbench polls only for conversation changes or displayed activity time", () =>
+  withRoster(async ({ kernel }) => {
+    let redraws = 0;
+    kernel.activityClockSnapshot = () => ({ state: "running" });
+    const panel = new MissionPanel(
+      kernel,
+      () => redraws++,
+      () => {},
+      { pollMs: 10 },
+    );
+    try {
+      await new Promise((resolve) => setTimeout(resolve, 35));
+      assert.equal(redraws, 0);
+      panel.tab = 1;
+      await new Promise((resolve) => setTimeout(resolve, 25));
+      assert.ok(redraws > 0);
+    } finally {
+      panel.dispose();
+    }
+  }));
+
 test("bottom board shows active and paused goals together, hides archived goals, and preserves pause after a plan edit", () =>
   withRoster(async ({ kernel }) => {
     const archived = kernel.setGoal("Archived fixture must stay hidden");

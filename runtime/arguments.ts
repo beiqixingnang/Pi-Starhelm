@@ -61,7 +61,7 @@ export function delegationInput(args: any) {
       throw new Error(
         "Every delegated item requires a non-empty task. No tasks were started.",
       );
-    const rawGoalIds = input.goalIds ?? args.goalIds;
+    const rawGoalIds = input.goalIds ?? args.goalIds ?? undefined;
     if (
       rawGoalIds !== undefined &&
       (!Array.isArray(rawGoalIds) ||

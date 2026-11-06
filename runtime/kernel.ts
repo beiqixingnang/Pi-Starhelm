@@ -42,6 +42,7 @@ import {
   type TaskTiming,
   type ReviewHold,
   type ActivityClock,
+  type WorkerStage,
 } from "./types.ts";
 
 const noProgressReason =
@@ -79,6 +80,12 @@ export interface KernelOptions {
   compact?: () => void;
   now?: () => number;
 }
+export interface SnapshotOptions {
+  taskLimit?: number;
+  taskOffset?: number;
+  deliveryLimit?: number;
+  scheduleLimit?: number;
+}
 /** Owns work independently of model-controlled Goal and reminder tools. */
 export class MissionKernel {
   store: Store;
@@ -109,6 +116,16 @@ export class MissionKernel {
   private leadRunning = false;
   private compactionQueued = false;
   private decisionPolicyValue: "business-only" = "business-only";
+  private dashboardGoalCache?: {
+    revision: number;
+    missionId?: string;
+    limit: number;
+    includeSummary: boolean;
+    summary?: ReturnType<GoalLedger["summary"]>;
+    roots: GoalNode[];
+    rootCount: number;
+    summaries: Record<string, ReturnType<GoalLedger["summary"]>>;
+  };
   private collected = new Set<string>();
   private previews = new Map<string, Map<string, PublicActivity>>();
   private relocating = false;
@@ -334,6 +351,12 @@ export class MissionKernel {
   }
   decisionPolicy() {
     return this.decisionPolicyValue;
+  }
+  hasUserHold() {
+    return this.userHold;
+  }
+  activityClockSnapshot() {
+    return this.activityClock.snapshot(this.store.mission());
   }
   setDecisionPolicy(policy: "business-only") {
     if (policy !== "business-only")
@@ -1663,6 +1686,16 @@ export class MissionKernel {
     this.changed();
     return { removed };
   }
+  private supersedeContinuation(missionId: string) {
+    for (const delivery of this.store.pendingContinuations(missionId)) {
+      delivery.state = "superseded";
+      delivery.reason = "New work started after the idle-continuation notice.";
+      this.store.putDelivery(delivery);
+      this.store.event("delivery.superseded", delivery.id, {
+        cause: "new-task",
+      });
+    }
+  }
   dispatch(
     name: string,
     message: string,
@@ -1773,6 +1806,7 @@ export class MissionKernel {
       reviewDeliveryIds: [],
     };
     this.store.putTask(t);
+    this.supersedeContinuation(mission.id);
     this.trackTaskBatch(mission);
     this.store.event("task.accepted", id, { member: name, parent: parent?.id });
     this.turnActed = true;
@@ -2390,6 +2424,25 @@ export class MissionKernel {
     }
   }
   private validLeadDelivery(delivery: Delivery) {
+    if (delivery.kind === "continue") {
+      const mission = delivery.missionId
+        ? this.store.savedMission(delivery.missionId)
+        : undefined;
+      const selected = this.store.mission();
+      return Boolean(
+        mission &&
+          selected?.id === mission.id &&
+          mission.status === "active" &&
+          !mission.humanPaused &&
+          !mission.externalWait &&
+          mission.nextContinueAt <= this.now() &&
+          !this.userHold &&
+          !this.store.get("relocationHold") &&
+          !this.store.tasks(true).length &&
+          delivery.key ===
+            `continue:${mission.id}:${mission.turns}:${mission.nextContinueAt}`,
+      );
+    }
     if (delivery.kind === "batch") {
       const mission = delivery.missionId
         ? this.store.savedMission(delivery.missionId)
@@ -3233,8 +3286,23 @@ export class MissionKernel {
         "Continue the existing approved work, inspect retained results and use explicit new attempts when necessary.",
     };
   }
-  snapshot() {
+  snapshot(options: SnapshotOptions = {}) {
     const m = this.store.mission();
+    const members = this.store.members();
+    const taskPage = this.store.taskPage(
+      options.taskLimit ?? 1000,
+      options.taskOffset ?? 0,
+    );
+    const deliveries = this.store
+      .deliveries("lead", options.deliveryLimit)
+      .filter((d) => !["cancelled", "superseded"].includes(d.state));
+    const schedules = this.store.schedules(false, options.scheduleLimit);
+    const counts = {
+      members: members.length,
+      tasks: taskPage.total,
+      deliveries: this.store.deliveryCount("lead"),
+      schedules: this.store.scheduleCount(),
+    };
     return {
       recoveryPlan: this.recoveryPlan(),
       decisionPolicy: this.decisionPolicyValue,
@@ -3250,23 +3318,79 @@ export class MissionKernel {
         outputTokens: this.settings.maxOutputTokens || null,
       },
       compactionQueued: this.compactionQueued,
-      members: this.store.members(),
-      tasks: this.store.tasks().map(taskView),
-      deliveries: this.store
-        .deliveries("lead")
-        .filter((d) => !["cancelled", "superseded"].includes(d.state)),
-      schedules: this.store.schedules(),
+      members,
+      tasks: taskPage.tasks.map(taskView),
+      deliveries,
+      schedules,
+      counts,
+      bounded:
+        taskPage.tasks.length < taskPage.total ||
+        deliveries.length < counts.deliveries ||
+        schedules.length < counts.schedules,
       taskBatch: m ? this.store.get<TaskBatch>(`taskBatch:${m.id}`) : undefined,
       lifecycle: this.store.archiveCounts(),
       maintenance: !this.closing,
       held: this.userHold,
       workspaceHeld: Boolean(this.store.get("relocationHold")),
-      reviewHolds: this.store
-        .members()
+      reviewHolds: members
         .map((member) => this.store.get<ReviewHold>(`reviewHold:${member.id}`))
         .filter(Boolean),
       nextReportAt: m
         ? m.lastReportAt + this.settings.progressIntervalMs
+        : undefined,
+    };
+  }
+  dashboardSnapshot(goalLimit = 0, includeSummary = goalLimit > 0) {
+    const mission = this.store.mission();
+    const version = this.store.changeCount();
+    const limit = Math.max(0, Math.min(100, Math.floor(goalLimit)));
+    if (
+      !this.dashboardGoalCache ||
+      this.dashboardGoalCache.revision !== version ||
+      this.dashboardGoalCache.missionId !== mission?.id ||
+      this.dashboardGoalCache.limit !== limit ||
+      this.dashboardGoalCache.includeSummary !== includeSummary
+    ) {
+      const rootData = limit
+        ? this.store.activeMissionRoots(limit, mission?.id)
+        : { total: 0, goals: [] as GoalNode[] };
+      const summaries: Record<
+        string,
+        ReturnType<GoalLedger["summary"]>
+      > = {};
+      for (const goal of rootData.goals)
+        summaries[goal.id] = this.goals.summary(goal.id);
+      this.dashboardGoalCache = {
+        revision: version,
+        missionId: mission?.id,
+        limit,
+        includeSummary,
+        summary: includeSummary ? this.goals.summary(mission?.id) : undefined,
+        roots: rootData.goals,
+        rootCount: rootData.total,
+        summaries,
+      };
+    }
+    const members = this.store.members();
+    const memberTasks = this.store.memberDashboardTasks(
+      members.map((member) => member.id),
+    );
+    return {
+      mission,
+      goals: this.dashboardGoalCache.summary,
+      goalRoots: this.dashboardGoalCache.roots,
+      goalRootCount: this.dashboardGoalCache.rootCount,
+      goalSummaries: this.dashboardGoalCache.summaries,
+      recovery: this.recovery.current(),
+      activity: this.activityClock.snapshot(mission),
+      members,
+      memberTasks,
+      tasks: Object.values(memberTasks),
+      schedules: this.store.schedules(),
+      held: this.userHold,
+      workspaceHeld: Boolean(this.store.get("relocationHold")),
+      nextReportAt: mission
+        ? mission.lastReportAt + this.settings.progressIntervalMs
         : undefined,
     };
   }
@@ -3312,6 +3436,7 @@ export class MissionKernel {
   async tick() {
     if (this.closing || this.ticking) return;
     this.ticking = true;
+    const writesBefore = this.store.changeCount();
     try {
       const now = this.now();
       for (const delivery of this.store.deliveries("lead"))
@@ -3607,7 +3732,7 @@ export class MissionKernel {
       this.pump();
     } finally {
       this.ticking = false;
-      this.changed();
+      if (this.store.changeCount() !== writesBefore) this.changed();
     }
   }
   private pump() {
@@ -3921,6 +4046,7 @@ export class MissionKernel {
     task.startedAt = this.now();
     task.updatedAt = this.now();
     task.processState = "running";
+    task.workerTrace = {};
     this.store.putTask(task);
     const token = randomUUID() + randomUUID();
     this.tokens.set(token, { taskId: task.id, epoch: task.epoch });
@@ -4021,6 +4147,10 @@ export class MissionKernel {
             if (this.closing) return;
             const current = this.store.task(task.id);
             if (!current || current.epoch !== task.epoch) return;
+            if (event.type === "stage" && event.stage) {
+              this.recordWorkerStage(current, event.stage, event.timestamp);
+              return;
+            }
             if (event.type === "session" && event.sessionFile) {
               const expected = path.join(
                 this.store.directory,
@@ -4084,6 +4214,18 @@ export class MissionKernel {
           void this.tick().catch((e) => this.options.notify?.(String(e)));
       }
     })();
+  }
+  private recordWorkerStage(
+    task: Task,
+    stage: WorkerStage,
+    timestamp = this.now(),
+  ) {
+    task.workerTrace ??= {};
+    if (task.workerTrace[stage] !== undefined) return;
+    task.workerTrace[stage] = timestamp;
+    this.store.putTask(task);
+    this.store.event("task.worker-stage", task.id, { stage, at: timestamp });
+    this.changed();
   }
   private async acceptOutcome(started: Task, outcome: WorkerOutcome) {
     const task = this.store.task(started.id);

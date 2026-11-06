@@ -836,12 +836,14 @@ for (const reason of ["owner", "unknown-worker"]) {
       const store = new Store(path.join(h.agent, "mission-control/v2", id));
       try {
         if (reason === "unknown-worker") {
-          store.db.prepare("INSERT INTO tasks VALUES(?,?,?,?,?,?)").run(
+          store.db.prepare("INSERT INTO tasks VALUES(?,?,?,?,?,?,?,?)").run(
             "unknown-task",
             "reader",
             null,
             "interrupted",
             1,
+            "old-goal",
+            0,
             JSON.stringify({
               id: "unknown-task",
               member: "reader",

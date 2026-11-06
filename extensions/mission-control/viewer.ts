@@ -13,7 +13,7 @@ import {
   type MarkdownTheme,
 } from "@earendil-works/pi-tui";
 import type { MissionKernel } from "../../runtime/kernel.ts";
-import type { Task, PublicActivity } from "../../runtime/types.ts";
+import type { Member, Task, PublicActivity } from "../../runtime/types.ts";
 import { memberTask } from "../../runtime/roster.ts";
 import { cleanText, textOf } from "../../runtime/public.ts";
 import {
@@ -121,9 +121,13 @@ function markdownTheme(theme?: ViewTheme): MarkdownTheme {
   };
 }
 
-export function teamRows(s: ReturnType<MissionKernel["snapshot"]>): Row[] {
+export function teamRows(
+  s: { members: Member[]; tasks: Task[] } & {
+    memberTasks?: Record<string, Task>;
+  },
+): Row[] {
   return s.members.map((member) => {
-    const task = memberTask(member, s.tasks);
+    const task = s.memberTasks?.[member.id] ?? memberTask(member, s.tasks);
     return {
       id: member.id,
       memberId: member.id,
@@ -316,8 +320,16 @@ export class MissionPanel {
     );
     if (options.pollMs !== 0) {
       this.timer = setInterval(
-        () => this.perform(() => this.refresh()),
-        options.pollMs ?? 500,
+        () => {
+          if (this.view === "conversation")
+            this.perform(() => this.refresh());
+          else if (
+            this.tab === 1 &&
+            this.kernel.activityClockSnapshot()?.state === "running"
+          )
+            this.redraw();
+        },
+        options.pollMs ?? 1000,
       );
       this.timer.unref?.();
     }
@@ -381,6 +393,8 @@ export class MissionPanel {
     const revision = this.revision,
       memberId = this.memberId;
     this.busy = true;
+    let redrawNeeded = false;
+    const previousError = this.error;
     try {
       const leadFile =
         this.scope === "lead" ? this.leadSessionFile?.() : undefined;
@@ -391,7 +405,13 @@ export class MissionPanel {
             : []
           : await memberSessionFiles(this.kernel.store.directory, memberId!);
       if (this.disposed || revision !== this.revision) return;
-      this.files = files;
+      if (
+        files.length !== this.files.length ||
+        files.some((file, index) => file !== this.files[index])
+      ) {
+        this.files = files;
+        redrawNeeded = true;
+      }
       const preferred =
         this.scope === "lead"
           ? leadFile
@@ -414,6 +434,7 @@ export class MissionPanel {
         this.records = [];
         this.before = 0;
         this.stamp = "";
+        redrawNeeded = true;
       }
       if (!this.file) return;
       const stat = await fs.stat(this.file),
@@ -430,19 +451,22 @@ export class MissionPanel {
               ? (this.records[0]?.offset ?? page.before)
               : page.before;
           this.skipped = page.skipped;
-          this.size = stat.size;
-          this.stamp = stamp;
           this.unread = false;
           this.selectedItem = undefined;
         }
+        this.size = stat.size;
+        this.stamp = stamp;
+        redrawNeeded = true;
       }
       this.error = "";
     } catch (error) {
       if (!this.disposed && revision === this.revision)
         this.error = cleanText(String(error), 250);
+      redrawNeeded = this.error !== previousError;
     } finally {
       this.busy = false;
-      if (!this.disposed) this.redraw();
+      if (!this.disposed && (redrawNeeded || this.error !== previousError))
+        this.redraw();
     }
   }
   async older() {
@@ -487,9 +511,9 @@ export class MissionPanel {
         for (const p of this.leadPreviews?.() ?? []) append(p);
       return items;
     }
-    const active = this.kernel.store
-      .tasks(true)
-      .find((t) => t.memberId === this.memberId && t.state === "running");
+    const active = this.memberId
+      ? this.kernel.store.memberDashboardTasks([this.memberId])[this.memberId]
+      : undefined;
     if (
       !this.file ||
       (active && (!active.sessionFile || active.sessionFile === this.file))
@@ -499,13 +523,7 @@ export class MissionPanel {
     return items;
   }
   private statusLabel(memberId: string) {
-    const tasks = this.kernel.store
-      .tasks()
-      .filter((t) => t.memberId === memberId)
-      .sort((a, b) => b.createdAt - a.createdAt);
-    const task =
-      tasks.find((t) => ["queued", "running", "waiting"].includes(t.state)) ??
-      tasks[0];
+    const task = this.kernel.store.memberDashboardTasks([memberId])[memberId];
     return task ? (stateNames[task.state] ?? task.state) : "待命";
   }
 
@@ -533,7 +551,7 @@ export class MissionPanel {
   }
 
   private renderContent(width: number) {
-    const s = this.kernel.snapshot();
+    const s = this.kernel.dashboardSnapshot();
     if (this.view === "team" && this.tab === 1)
       return this.goalsPanel.render(width);
     this.height = Math.max(3, this.getHeight() - 5);
@@ -880,7 +898,7 @@ export class MissionPanel {
         if (matchesKey(data, "pageUp"))
           this.pageScroll = Math.max(0, this.pageScroll - 10);
       } else {
-        const rows = teamRows(this.kernel.snapshot());
+        const rows = teamRows(this.kernel.dashboardSnapshot());
         if (
           this.selectedRow &&
           !rows.some((row) => row.id === this.selectedRow) &&

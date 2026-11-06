@@ -3319,12 +3319,14 @@ test(
         task: "",
         tasks: [],
         model: null,
+        goalIds: null,
         workspace: null,
         chain: [
           {
             agent: "scout",
             task: 'V2_TEST:{"op":"answer","text":"CHAIN_STAGE_ONE"}',
             model: null,
+            goalIds: null,
             workspace: {
               root: "",
               access: null,
@@ -4263,12 +4265,14 @@ test(
           processState: "stopped",
           reviewDeliveryIds: [],
         };
-        db.prepare("INSERT INTO tasks VALUES(?,?,?,?,?,?)").run(
+        db.prepare("INSERT INTO tasks VALUES(?,?,?,?,?,?,?,?)").run(
           task.id,
           task.memberId,
           null,
           task.state,
           i,
+          task.missionId,
+          0,
           JSON.stringify(task),
         );
       }
@@ -4495,12 +4499,14 @@ test(
           processState: "unknown",
           reviewDeliveryIds: [],
         };
-        db.prepare("INSERT INTO tasks VALUES(?,?,?,?,?,?)").run(
+        db.prepare("INSERT INTO tasks VALUES(?,?,?,?,?,?,?,?)").run(
           task.id,
           task.memberId,
           null,
           task.state,
           task.createdAt,
+          task.missionId,
+          0,
           JSON.stringify(task),
         );
         tasks.push({ taskId: id, expectedEpoch: 3 });

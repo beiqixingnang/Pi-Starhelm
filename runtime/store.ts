@@ -64,8 +64,7 @@ export class Store {
         .exec(`PRAGMA journal_mode=WAL; PRAGMA synchronous=FULL; PRAGMA busy_timeout=5000;
     CREATE TABLE IF NOT EXISTS meta(key TEXT PRIMARY KEY,data TEXT NOT NULL);
     CREATE TABLE IF NOT EXISTS members(id TEXT PRIMARY KEY,name TEXT UNIQUE NOT NULL,data TEXT NOT NULL);
-    CREATE TABLE IF NOT EXISTS tasks(id TEXT PRIMARY KEY,member TEXT NOT NULL,parent TEXT,state TEXT NOT NULL,created INTEGER NOT NULL,data TEXT NOT NULL);
-    CREATE INDEX IF NOT EXISTS task_state ON tasks(state,created);
+    CREATE TABLE IF NOT EXISTS tasks(id TEXT PRIMARY KEY,member TEXT NOT NULL,parent TEXT,state TEXT NOT NULL,created INTEGER NOT NULL,mission TEXT NOT NULL,archived INTEGER NOT NULL DEFAULT 0,data TEXT NOT NULL);
     CREATE TABLE IF NOT EXISTS deliveries(id TEXT PRIMARY KEY,key TEXT UNIQUE NOT NULL,recipient TEXT NOT NULL,state TEXT NOT NULL,created INTEGER NOT NULL,data TEXT NOT NULL);
     CREATE INDEX IF NOT EXISTS delivery_state ON deliveries(recipient,state,created);
     CREATE TABLE IF NOT EXISTS schedules(id TEXT PRIMARY KEY,state TEXT NOT NULL,due INTEGER NOT NULL,data TEXT NOT NULL);
@@ -75,6 +74,7 @@ export class Store {
       this.db.exec(`
         CREATE TABLE IF NOT EXISTS goal_nodes(id TEXT PRIMARY KEY,root TEXT NOT NULL,parent TEXT,data TEXT NOT NULL);
         CREATE INDEX IF NOT EXISTS goal_root ON goal_nodes(root);
+        CREATE INDEX IF NOT EXISTS goal_parent ON goal_nodes(parent);
         CREATE TABLE IF NOT EXISTS goal_acceptances(id TEXT PRIMARY KEY,goal TEXT NOT NULL,data TEXT NOT NULL);
         CREATE INDEX IF NOT EXISTS goal_acceptance_goal ON goal_acceptances(goal);
         CREATE TABLE IF NOT EXISTS goal_receipts(id TEXT PRIMARY KEY,goal TEXT NOT NULL,data TEXT NOT NULL);
@@ -82,6 +82,37 @@ export class Store {
         CREATE TABLE IF NOT EXISTS goal_submissions(id TEXT PRIMARY KEY,goal TEXT NOT NULL,data TEXT NOT NULL);
         CREATE INDEX IF NOT EXISTS goal_submission_goal ON goal_submissions(goal);
         CREATE TABLE IF NOT EXISTS goal_missions(id TEXT PRIMARY KEY,data TEXT NOT NULL);
+      `);
+      const taskColumns = new Set(
+        (
+          this.db.prepare("PRAGMA table_info(tasks)").all() as {
+            name: string;
+          }[]
+        ).map((column) => column.name),
+      );
+      if (!taskColumns.has("mission") || !taskColumns.has("archived")) {
+        this.db.exec("BEGIN IMMEDIATE");
+        try {
+          this.db.exec(`
+            CREATE TABLE tasks_migration(id TEXT PRIMARY KEY,member TEXT NOT NULL,parent TEXT,state TEXT NOT NULL,created INTEGER NOT NULL,mission TEXT NOT NULL,archived INTEGER NOT NULL DEFAULT 0,data TEXT NOT NULL);
+            INSERT INTO tasks_migration(id,member,parent,state,created,mission,archived,data)
+            SELECT id,member,parent,state,created,COALESCE(json_extract(data,'$.missionId'),''),
+              CASE WHEN json_extract(data,'$.archivedAt') IS NULL THEN 0 ELSE 1 END,data
+            FROM tasks;
+            DROP TABLE tasks;
+            ALTER TABLE tasks_migration RENAME TO tasks;
+          `);
+          this.db.exec("COMMIT");
+        } catch (error) {
+          this.db.exec("ROLLBACK");
+          throw error;
+        }
+      }
+      this.db.exec(`
+        CREATE INDEX IF NOT EXISTS task_state ON tasks(state,created);
+        CREATE INDEX IF NOT EXISTS task_mission_created ON tasks(mission,created,id);
+        CREATE INDEX IF NOT EXISTS task_member_created ON tasks(member,created DESC,id);
+        CREATE INDEX IF NOT EXISTS task_archived_created ON tasks(archived,created DESC,id);
       `);
       const version = this.get<number>("schema");
       if (version !== undefined && version !== 2)
@@ -118,6 +149,15 @@ export class Store {
     } finally {
       this.inTransaction = false;
     }
+  }
+  changeCount(): number {
+    return Number(
+      (
+        this.db.prepare("SELECT total_changes() AS count").get() as {
+          count: number | bigint;
+        }
+      ).count,
+    );
   }
   get<T>(key: string): T | undefined {
     const row = this.db
@@ -333,7 +373,7 @@ export class Store {
   putTask(t: Task) {
     this.db
       .prepare(
-        "INSERT INTO tasks VALUES (?,?,?,?,?,?) ON CONFLICT(id) DO UPDATE SET state=excluded.state,data=excluded.data",
+        "INSERT INTO tasks VALUES (?,?,?,?,?,?,?,?) ON CONFLICT(id) DO UPDATE SET state=excluded.state,mission=excluded.mission,archived=excluded.archived,data=excluded.data",
       )
       .run(
         t.id,
@@ -341,6 +381,8 @@ export class Store {
         t.parentId ?? null,
         t.state,
         t.createdAt,
+        t.missionId,
+        t.archivedAt === undefined ? 0 : 1,
         JSON.stringify(t),
       );
   }
@@ -356,10 +398,68 @@ export class Store {
         .prepare(
           activeOnly
             ? "SELECT data FROM tasks WHERE state IN ('queued','running','waiting') ORDER BY created"
-            : `SELECT data FROM tasks ${includeArchived ? "" : "WHERE json_extract(data,'$.archivedAt') IS NULL"} ORDER BY created DESC LIMIT 1000`,
+            : `SELECT data FROM tasks ${includeArchived ? "" : "WHERE archived=0"} ORDER BY created DESC LIMIT 1000`,
         )
         .all() as { data: string }[]
     ).map((r) => JSON.parse(r.data));
+  }
+  taskPage(limit = 1000, offset = 0): { total: number; tasks: Task[] } {
+    const size = Math.max(1, Math.min(1000, Math.floor(limit)));
+    const start = Math.max(0, Math.floor(offset));
+    const total = this.db
+      .prepare(
+        "SELECT COUNT(*) AS count FROM tasks WHERE archived=0",
+      )
+      .get() as { count: number };
+    const rows = this.db
+      .prepare(
+        "SELECT data FROM tasks WHERE archived=0 ORDER BY created DESC,id LIMIT ? OFFSET ?",
+      )
+      .all(size, start) as { data: string }[];
+    return { total: total.count, tasks: rows.map((row) => JSON.parse(row.data)) };
+  }
+  memberDashboardTasks(memberIds: string[]): Record<string, Task> {
+    const result: Record<string, Task> = {};
+    const select = this.db.prepare(`
+      SELECT data FROM tasks
+      WHERE member=? AND archived=0
+      ORDER BY CASE
+        WHEN state='running' THEN 0
+        WHEN state IN ('queued','waiting') THEN 1
+        ELSE 2
+      END,created DESC,id
+      LIMIT 1
+    `);
+    for (const id of memberIds) {
+      const row = select.get(id) as { data: string } | undefined;
+      if (row) result[id] = JSON.parse(row.data);
+    }
+    return result;
+  }
+  activeMissionRoots(
+    limit: number,
+    selectedId?: string,
+  ): { total: number; goals: GoalNode[] } {
+    const predicate = `
+      g.parent IS NULL
+      AND json_extract(g.data,'$.state') NOT IN ('accepted','cancelled','skipped')
+      AND json_extract(g.data,'$.archivedAt') IS NULL
+      AND COALESCE(json_extract(m.data,'$.status'),'active') NOT IN ('complete','stopped')
+      AND json_extract(m.data,'$.archivedAt') IS NULL
+    `;
+    const total = this.db
+      .prepare(
+        `SELECT COUNT(*) AS count FROM goal_nodes g LEFT JOIN goal_missions m ON m.id=g.id WHERE ${predicate}`,
+      )
+      .get() as { count: number };
+    const rows = this.db
+      .prepare(
+        `SELECT g.data FROM goal_nodes g LEFT JOIN goal_missions m ON m.id=g.id WHERE ${predicate} ORDER BY CASE WHEN g.id=? THEN 0 ELSE 1 END,g.rowid LIMIT ?`,
+      )
+      .all(selectedId ?? "", Math.max(1, Math.min(100, Math.floor(limit)))) as {
+      data: string;
+    }[];
+    return { total: total.count, goals: rows.map((row) => JSON.parse(row.data)) };
   }
   hasUnknownProcess(memberId: string): boolean {
     return Boolean(
@@ -387,7 +487,7 @@ export class Store {
     return (
       this.db
         .prepare(
-          "SELECT data FROM tasks WHERE json_extract(data,'$.missionId')=? ORDER BY created",
+          "SELECT data FROM tasks WHERE mission=? ORDER BY created,id",
         )
         .all(id) as { data: string }[]
     ).map((row) => JSON.parse(row.data));
@@ -419,9 +519,30 @@ export class Store {
       .run(d.id, d.key, d.to, d.state, d.createdAt, JSON.stringify(d));
     return d;
   }
-  deliveries(to?: string): Delivery[] {
+  deliveries(to?: string, limit?: number): Delivery[] {
     const condition = to ? "recipient=? AND " : "",
       args = to ? [to] : [];
+    if (limit !== undefined) {
+      const size = Math.max(1, Math.min(1000, Math.floor(limit)));
+      const pending = this.db
+        .prepare(
+          `SELECT data FROM deliveries WHERE ${condition}state NOT IN ('observed','cancelled','superseded') ORDER BY created DESC LIMIT ?`,
+        )
+        .all(...args, size) as { data: string }[];
+      const recent = this.db
+        .prepare(
+          `SELECT data FROM deliveries ${to ? "WHERE recipient=?" : ""} ORDER BY created DESC LIMIT ?`,
+        )
+        .all(...args, size) as { data: string }[];
+      return [
+        ...new Map(
+          [...pending, ...recent].map((row) => {
+            const delivery = JSON.parse(row.data);
+            return [delivery.id, delivery] as [string, Delivery];
+          }),
+        ).values(),
+      ];
+    }
     const pending = this.db
       .prepare(
         `SELECT data FROM deliveries WHERE ${condition}state NOT IN ('observed','cancelled','superseded') ORDER BY created LIMIT 2000`,
@@ -440,6 +561,22 @@ export class Store {
         }),
       ).values(),
     ];
+  }
+  deliveryCount(to?: string): number {
+    const condition = to ? "WHERE recipient=?" : "";
+    const row = this.db
+      .prepare(`SELECT COUNT(*) AS count FROM deliveries ${condition}`)
+      .get(...(to ? [to] : [])) as { count: number };
+    return row.count;
+  }
+  pendingContinuations(missionId: string): Delivery[] {
+    return (
+      this.db
+        .prepare(
+          "SELECT data FROM deliveries WHERE recipient='lead' AND state='pending' AND json_extract(data,'$.kind')='continue' AND json_extract(data,'$.missionId')=? ORDER BY created",
+        )
+        .all(missionId) as { data: string }[]
+    ).map((row) => JSON.parse(row.data));
   }
   putSchedule(s: Schedule) {
     if (s.state === "ended") {
@@ -468,11 +605,17 @@ export class Store {
         ? this.archived<Schedule>("schedule", id)
         : undefined;
   }
-  schedules(includeArchived = false): Schedule[] {
+  schedules(includeArchived = false, limit?: number): Schedule[] {
     const active = (
-      this.db.prepare("SELECT data FROM schedules ORDER BY due").all() as {
-        data: string;
-      }[]
+      this.db
+        .prepare(
+          `SELECT data FROM schedules ORDER BY due${limit === undefined ? "" : " LIMIT ?"}`,
+        )
+        .all(
+          ...(limit === undefined
+            ? []
+            : [Math.max(1, Math.min(1000, Math.floor(limit)))]),
+        ) as { data: string }[]
     ).map((x) => JSON.parse(x.data));
     return includeArchived
       ? [
@@ -483,6 +626,13 @@ export class Store {
           ).values(),
         ]
       : active;
+  }
+  scheduleCount(): number {
+    return (
+      this.db.prepare("SELECT COUNT(*) AS count FROM schedules").get() as {
+        count: number;
+      }
+    ).count;
   }
   artifact(id: string, kind: string, body: string): string {
     if (!/^[\w-]+$/.test(id) || !/^[\w-]+$/.test(kind))

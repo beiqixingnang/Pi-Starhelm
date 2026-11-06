@@ -18,6 +18,17 @@ test("empty optional arrays/null never hide a supplied task, parallel list or ch
     false,
   );
   assert.equal(
+    delegationInput({ task: "single", goalIds: null }).inputs[0].goalIds,
+    undefined,
+  );
+  assert.deepEqual(
+    delegationInput({
+      goalIds: ["root-leaf"],
+      chain: [{ task: "child", goalIds: null }],
+    }).inputs[0].goalIds,
+    ["root-leaf"],
+  );
+  assert.equal(
     delegationInput({ task: null, tasks: [{ task: "parallel" }], chain: [] })
       .chain,
     false,

@@ -213,10 +213,12 @@ export default function (pi: ExtensionAPI) {
       );
   const activateMissionTools = () => {
     const available = new Set(pi.getAllTools().map((t) => t.name));
-    const active = new Set(
-      pi.getActiveTools().filter((name) => available.has(name)),
-    );
+    const activeNames = pi
+      .getActiveTools()
+      .filter((name) => available.has(name));
+    const active = new Set(activeNames);
     for (const tool of missionTools()) active.add(tool.name);
+    if (active.size === activeNames.length) return;
     pi.setActiveTools([...active]);
   };
   const runtimeIdentity = () => {
@@ -238,7 +240,11 @@ export default function (pi: ExtensionAPI) {
     return kernel;
   };
   function modelStatus() {
-    const snapshot = current().snapshot();
+    const snapshot = current().snapshot({
+      taskLimit: 12,
+      deliveryLimit: 8,
+      scheduleLimit: 8,
+    });
     const report = { runtime: runtimeIdentity(), ...snapshot };
     if (JSON.stringify(report).length <= 30000) return report;
     const m = snapshot.mission;
@@ -272,6 +278,7 @@ export default function (pi: ExtensionAPI) {
         missionId: task.missionId,
         state: task.state,
         processState: task.processState,
+        workerTrace: task.workerTrace,
         epoch: task.epoch,
         attemptOf: task.attemptOf,
       })),
@@ -292,10 +299,7 @@ export default function (pi: ExtensionAPI) {
       bounded: true,
       counts: {
         criteria: m?.criteria.length ?? 0,
-        members: snapshot.members.length,
-        tasks: snapshot.tasks.length,
-        deliveries: snapshot.deliveries.length,
-        schedules: snapshot.schedules.length,
+        ...snapshot.counts,
       },
       details:
         "Large fields and lists are excerpted. Use team_list, team_tree, team_collect or lifecycle_history for specific details; recoveryPlan contains the next exact recovery call.",
@@ -339,7 +343,7 @@ export default function (pi: ExtensionAPI) {
           );
         ctx.ui.setStatus(
           "mission-control",
-          kernel.snapshot().mission?.status ?? "ready",
+        kernel.store.mission()?.status ?? "ready",
         );
         redraw?.();
       }
@@ -664,7 +668,7 @@ export default function (pi: ExtensionAPI) {
       if (
         kernel.goals.children(mission.id).length &&
         (mission.status !== "active" ||
-          kernel.snapshot().held ||
+          kernel.hasUserHold() ||
           mission.humanPaused ||
           kernel.store.get("relocationHold"))
       )
@@ -1123,16 +1127,28 @@ export default function (pi: ExtensionAPI) {
   tool(
     "team_list",
     "Team status",
-    "Read team definitions and actual task state. Avoid polling; task completion is automatic.",
-    Type.Object({}),
-    () => ({
-      members: current().store.members(),
-      tasks: current()
-        .store.tasks()
-        .map(taskView)
-        .map(({ inputPath, resultPath, ...t }) => ({ ...t, resultPath })),
-      maintenance: current().snapshot().maintenance,
+    "Read team definitions and a bounded page of recent task state. Supply offset/limit for more; task completion is automatic.",
+    Type.Object({
+      offset: Type.Optional(Type.Integer({ minimum: 0 })),
+      limit: Type.Optional(Type.Integer({ minimum: 1, maximum: 100 })),
     }),
+    (args) => {
+      const page = current().store.taskPage(args.limit ?? 50, args.offset ?? 0);
+      return {
+        members: current().store.members(),
+        tasks: page.tasks
+          .map(taskView)
+          .map(({ inputPath, resultPath, ...t }) => ({ ...t, resultPath })),
+        taskCount: page.total,
+        offset: args.offset ?? 0,
+        limit: args.limit ?? 50,
+        nextOffset:
+          (args.offset ?? 0) + page.tasks.length < page.total
+            ? (args.offset ?? 0) + page.tasks.length
+            : undefined,
+        maintenance: true,
+      };
+    },
   );
   tool(
     "team_tree",
@@ -2687,7 +2703,7 @@ export default function (pi: ExtensionAPI) {
           return;
         }
         if (context.mode !== "tui" || command === "status") {
-          context.ui.notify(JSON.stringify(k.snapshot(), null, 2), "info");
+          context.ui.notify(JSON.stringify(modelStatus(), null, 2), "info");
           return;
         }
         if (command && command !== "view" && command !== "agents")
@@ -2707,7 +2723,7 @@ export default function (pi: ExtensionAPI) {
       try {
         if (context.mode !== "tui") {
           context.ui.notify(
-            JSON.stringify(current().snapshot(), null, 2),
+            JSON.stringify(modelStatus(), null, 2),
             "info",
           );
           return;

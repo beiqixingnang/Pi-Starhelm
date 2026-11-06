@@ -53,6 +53,15 @@ export interface TaskTiming {
   timeoutMs?: number;
   queueTimeoutMs?: number;
 }
+export type WorkerStage =
+  | "process_spawned"
+  | "rpc_ready"
+  | "prompt_accepted"
+  | "agent_started"
+  | "model_turn_started"
+  | "first_response"
+  | "first_text"
+  | "worker_settled";
 export interface Task {
   id: string;
   missionId: string;
@@ -85,6 +94,7 @@ export interface Task {
   timeoutSource?: "default" | "task";
   executionMs?: number;
   processState: "not-started" | "running" | "stopped" | "unknown";
+  workerTrace?: Partial<Record<WorkerStage, number>>;
   reviewDeliveryIds: string[];
   capabilitySnapshot?: Member;
   actualTools?: string[];
@@ -479,6 +489,7 @@ export interface WorkerOutcome {
 }
 export interface WorkerEvent {
   type: string;
+  stage?: WorkerStage;
   text?: string;
   tool?: string;
   timestamp?: number;

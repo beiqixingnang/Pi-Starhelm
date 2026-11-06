@@ -6,7 +6,7 @@ import fs from "node:fs";
 import os from "node:os";
 import path from "node:path";
 import { MissionKernel } from "../../runtime/kernel.ts";
-import { createWorkerFactory } from "../../runtime/rpc-worker.ts";
+import { createWorkerFactory, writeRpcLine } from "../../runtime/rpc-worker.ts";
 
 test("RPC diagnostics reject nested/spoofed types and preserve LF record indices and incomplete EOF", async () => {
   for (const prefix of [
@@ -207,4 +207,148 @@ test("large canonical messages still fail visibly; embedded event names cannot b
     )) {
     }
   }, /incomplete/);
+});
+
+test(
+  "worker traces distinguish RPC, prompt, model-turn and first-response failures",
+  { timeout: 30000 },
+  async () => {
+    const directory = fs.realpathSync.native(
+      fs.mkdtempSync(path.join(os.tmpdir(), "rpc-worker-trace-")),
+    );
+    const cli = path.join(directory, "staged-worker.mjs");
+    fs.writeFileSync(
+      cli,
+      `import readline from 'node:readline';
+const sessionArg=process.argv.indexOf('--session-id');
+const mode=sessionArg>=0?process.argv[sessionArg+1]:'';
+const send=(value,done)=>process.stdout.write(JSON.stringify(value)+'\\n',done);
+readline.createInterface({input:process.stdin}).on('line',line=>{
+ const request=JSON.parse(line);
+ if(request.type==='get_state'){
+  if(mode==='missing-session')send({type:'response',id:request.id,success:false,error:'Session not found'});
+  else send({type:'response',id:request.id,success:true,data:{sessionId:mode}},()=>{
+   if(mode==='worker-exit'){process.stdin.destroy();setTimeout(()=>process.exit(0),100);}
+  });
+ } else if(request.type==='prompt'){
+  send({type:'response',id:request.id,success:true,data:{disposition:'started'}});
+  if(mode==='model-turn-hang')send({type:'agent_start'});
+  if(mode==='model-turn-hang')send({type:'turn_start'});
+ } else if(request.type==='abort'){
+  send({type:'response',id:request.id,success:true},()=>process.exit(0));
+ }
+});`,
+    );
+    for (const scenario of [
+      {
+        mode: "missing-session",
+        timeoutMs: 0,
+        error: /Session not found/,
+        required: ["process_spawned"],
+        absent: ["rpc_ready", "prompt_accepted"],
+      },
+      {
+        mode: "worker-exit",
+        timeoutMs: 0,
+        error: /Worker (?:process )?exited/,
+        required: ["process_spawned"],
+        absent: ["prompt_accepted"],
+      },
+      {
+        mode: "prompt-hang",
+        timeoutMs: 2000,
+        error: /deadline exceeded/,
+        required: ["process_spawned", "rpc_ready", "prompt_accepted"],
+        absent: ["agent_started", "model_turn_started", "first_response"],
+      },
+      {
+        mode: "model-turn-hang",
+        timeoutMs: 2000,
+        error: /deadline exceeded/,
+        required: [
+          "process_spawned",
+          "rpc_ready",
+          "prompt_accepted",
+          "agent_started",
+          "model_turn_started",
+        ],
+        absent: ["first_response", "first_text"],
+      },
+    ]) {
+      const makeKernel = () =>
+        new MissionKernel({
+          directory,
+          cwd: directory,
+          sessionId: "trace",
+          isLeadIdle: () => false,
+          wake: () => {},
+          workerFactory: createWorkerFactory(
+            cli,
+            path.resolve("extensions/mission-control/member.ts"),
+          ),
+        });
+      let kernel = makeKernel();
+      kernel.start(false);
+      try {
+        kernel.setGoal(`Trace ${scenario.mode}`, ["Record the stage boundary"]);
+        const member = kernel.addMember({
+          name: `worker-${scenario.mode}`,
+          role: "RPC trace fixture",
+          thinkingLevel: "off",
+          temporary: false,
+          allow: [],
+          workspace: {
+            root: directory,
+            access: "read-only",
+            execution: "files",
+            extraReadRoots: [],
+          },
+        });
+        member.sessionId = scenario.mode;
+        kernel.store.putMember(member);
+        const task = kernel.dispatch(
+          member.name,
+          "Reply with the fixture result",
+          { timeoutMs: scenario.timeoutMs },
+        );
+        const deadline = Date.now() + 7000;
+        let current;
+        do {
+          current = kernel.store.task(task.id);
+          if (["completed", "failed", "cancelled", "interrupted"].includes(current.state))
+            break;
+          await new Promise((resolve) => setTimeout(resolve, 20));
+        } while (Date.now() < deadline);
+        current = kernel.store.task(task.id);
+        assert.equal(current.state, "failed", scenario.mode);
+        assert.match(current.error, scenario.error, scenario.mode);
+        for (const stage of scenario.required)
+          assert.equal(typeof current.workerTrace?.[stage], "number", `${scenario.mode}: ${stage}`);
+        for (const stage of scenario.absent)
+          assert.equal(current.workerTrace?.[stage], undefined, `${scenario.mode}: ${stage}`);
+        assert.equal(typeof current.workerTrace?.worker_settled, "number");
+      } finally {
+        await kernel.close();
+      }
+    }
+    fs.rmSync(directory, { recursive: true, force: true });
+  },
+);
+
+test("RPC input write failures retain synchronous and callback EPIPE diagnostics", async () => {
+  const epipe = Object.assign(new Error("write EPIPE"), { code: "EPIPE" });
+  await assert.rejects(
+    writeRpcLine(
+      { write() { throw epipe; } },
+      "{}\n",
+    ),
+    /write EPIPE/,
+  );
+  await assert.rejects(
+    writeRpcLine(
+      { write(_line, callback) { callback(epipe); } },
+      "{}\n",
+    ),
+    /write EPIPE/,
+  );
 });
