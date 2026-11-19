@@ -12,8 +12,10 @@ needed. The release also improves large streamed tool arguments and TUI
 rendering, adds extension update notices, bounds `pi.exec` output and timeout
 handling, and fixes active-tool ordering and several TUI/clipboard cases.
 
-The repository now contains an untouched upstream source snapshot at
-`vendor/pi-1.5.0/`. Its identity is recorded in `vendor/pi-source.json`:
+At the time of this update, an untouched upstream source snapshot was stored at
+`vendor/pi-1.5.0/`. That duplicate snapshot has since been removed from the
+current tree; the compatibility record below remains, and the source content is
+available in Git history. Its archived identity was:
 
 - tag: `v1.5.0`
 - commit: `f9a26365568127461c47a07a37dcb42c140a3ac5`
