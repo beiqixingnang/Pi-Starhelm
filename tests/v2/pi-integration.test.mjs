@@ -1676,18 +1676,55 @@ test(
     harness(async (h) => {
       const file = path.join(h.cwd, "uncooperative-decoder.ts");
       await fs.writeFile(file, "export const position = 173;\n");
-      const accepted = await h.tool("subagent", {
-        task:
+      await fs.writeFile(
+        path.join(process.env.PI_CODING_AGENT_DIR, "mission-control.json"),
+        JSON.stringify({
+          workerExtensions: [fixture],
+          memberContext: { mode: "notes", inputLimitTokens: 20000 },
+          progressIntervalMs: 3600000,
+          reconnect: { enabled: false },
+        }),
+      );
+      await h.session.reload();
+      await h.tool("mission_notifications", {
+        action: "set",
+        taskSuccess: false,
+        taskFailure: false,
+      });
+      await h.tool("goal_start", {
+        objective: "Refuse notes handoff without writing notes",
+        criteria: ["Do not claim successful empty work"],
+      });
+      await h.tool("team_spawn", {
+        name: "uncooperative-notes-worker",
+        role: "worker",
+      });
+      const memory = await h.tool("team_send", {
+        to: "uncooperative-notes-worker",
+        message: 'V2_TEST:{"op":"tool","name":"context_mode","args":{}}',
+        wait: true,
+      });
+      const memoryStatus = JSON.parse(
+        JSON.parse(memory.content[0].text).result,
+      );
+      assert.equal(JSON.parse(memoryStatus.text).mode, "notes");
+      assert.equal(JSON.parse(memoryStatus.text).budget.inputLimitTokens, 20000);
+      const accepted = await h.tool("team_send", {
+        to: "uncooperative-notes-worker",
+        message:
           "V2_TEST:" +
           JSON.stringify({
             op: "notes-cycle",
             windows: 1,
             auto: true,
+            largeRead: true,
+            largeReads: 8,
+            ignoreAtStep: 10,
             file,
             ignorePreparation: "claim",
           }),
       });
-      const id = JSON.parse(accepted.content[0].text).accepted[0].taskId;
+      const id = JSON.parse(accepted.content[0].text).taskId;
       await until(async () =>
         ["completed", "failed"].includes(
           (await h.snapshot()).tasks.find((t) => t.id === id)?.state,
@@ -1772,6 +1809,11 @@ test(
   { timeout: 30000 },
   () =>
     harness(async (h) => {
+      await h.tool("mission_notifications", {
+        action: "set",
+        taskSuccess: false,
+        taskFailure: false,
+      });
       await fs.writeFile(
         path.join(process.env.PI_CODING_AGENT_DIR, "mission-control.json"),
         JSON.stringify({
@@ -3964,6 +4006,7 @@ test("real Pi reconnects a provider-side aborted response in the same run", () =
 
 test("a real provider-side abort remains a recoverable failure and never becomes a user Escape hold", () =>
   harness(async (h) => {
+    await h.tool("reconnect_config", { action: "set", enabled: false });
     await h.tool("goal_start", {
       objective: "Recover a provider abort",
       criteria: ["Preserve user control"],
@@ -4012,7 +4055,7 @@ test(
 );
 
 test(
-  "real Pi resumes a paused goal when the user sends the next message",
+  "real Pi answers questions while paused and resumes on a clear natural-language continue request",
   { timeout: 15000 },
   () =>
     harness(async (h) => {
@@ -4023,9 +4066,11 @@ test(
       await h.session.prompt("/mission pause");
       assert.equal((await h.snapshot()).mission.status, "paused");
       await h.session.prompt(
-        'V2_TEST:{"op":"answer","text":"AUTO_RESUMED_BY_MESSAGE"}',
+        'V2_TEST:{"op":"answer","text":"QUESTION_ANSWERED"}',
       );
-      assert.equal(h.session.getLastAssistantText(), "AUTO_RESUMED_BY_MESSAGE");
+      assert.equal(h.session.getLastAssistantText(), "QUESTION_ANSWERED");
+      assert.equal((await h.snapshot()).mission.status, "paused");
+      await h.session.prompt("我问完了，你继续做吧");
       const resumed = (await h.snapshot()).mission;
       assert.equal(resumed.status, "active");
       assert.equal(resumed.humanPaused, false);
@@ -4199,6 +4244,7 @@ test(
   { timeout: 10000 },
   () =>
     harness(async (h) => {
+      await h.tool("reconnect_config", { action: "set", enabled: false });
       await h.tool("goal_start", {
         objective: "Measure actual activity",
         criteria: ["No idle charge"],

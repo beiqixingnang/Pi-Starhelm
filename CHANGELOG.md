@@ -1,6 +1,6 @@
 # 2.18.5 — simpler resume and Starhelm-owned retries (2026-11-19)
 
-- Resume any paused goal when the user sends a new message; Esc interrupts the current task tree without replaying cancelled tasks. Remove user-facing mission stop commands.
+- Keep goals and scheduled reminders paused while answering ordinary questions after Esc or a pause; a clear natural-language continue/restart request resumes them without a slash command or replaying cancelled tasks. Remove user-facing mission stop commands.
 - Enable unbounded Starhelm retries for transient provider errors by default and decouple them from Pi's native retry setting.
 - Default compaction to the current conversation model, add `current` to clear a model override, and shorten the default tool-catalog response.
 - Refresh the repository's Pi source reference and dependency lock to v1.5.2.

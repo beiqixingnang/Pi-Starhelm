@@ -472,12 +472,19 @@ export default function (pi: ExtensionAPI) {
               { name: "context_mode", args: { mode: "notes" } },
             ];
             for (let cycle = 0; cycle < (command.windows ?? 2); cycle++) {
-              if (command.auto)
-                sequence.push({
-                  name: "read",
-                  args: { path: command.file },
-                  highUsage: true,
-                });
+              if (command.auto) {
+                const readCount = command.largeRead
+                  ? (command.largeReads ?? 1)
+                  : 1;
+                for (let read = 0; read < readCount; read++)
+                  sequence.push({
+                    name: command.largeRead ? "fixture_large_read" : "read",
+                    args: command.largeRead
+                      ? { index: cycle * readCount + read }
+                      : { path: command.file },
+                    highUsage: !command.largeRead,
+                  });
+              }
               sequence.push(
                 {
                   name: "context_note",
@@ -499,7 +506,10 @@ export default function (pi: ExtensionAPI) {
               );
             }
             const step = ++notesCycle.step;
-            if (command.ignorePreparation && step >= 3) {
+            if (
+              command.ignorePreparation &&
+              step >= (command.ignoreAtStep ?? 3)
+            ) {
               if (command.ignorePreparation === "claim")
                 answer("Ready, but I did not save notes or call rollover.");
               else tool("read", { path: command.file });

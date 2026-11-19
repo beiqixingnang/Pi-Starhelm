@@ -213,11 +213,24 @@ test("Escape settles running, queued and descendant work while retaining the pau
     assert.equal(h.kernel.snapshot().held, true);
     await h.kernel.onHumanInput("How is it going?");
     await h.kernel.tick();
+    assert.equal(h.kernel.store.mission().humanPaused, true);
+    assert.equal(h.kernel.store.mission().status, "paused");
+    assert.equal(h.kernel.store.schedule(reminder.id).nextAt, 110000);
+    assert.equal(
+      h.kernel.store.deliveries("lead").some((d) => d.scheduleId === reminder.id),
+      false,
+    );
+    await h.kernel.onHumanInput("你继续");
+    await h.kernel.tick();
     assert.equal(h.kernel.store.mission().humanPaused, false);
     assert.equal(h.kernel.store.mission().status, "active");
     assert.equal(h.kernel.store.mission().pauseSource, undefined);
     assert.equal(h.kernel.store.get("escapeHold"), undefined);
     assert.equal(h.kernel.snapshot().held, false);
+    assert.equal(
+      h.kernel.store.deliveries("lead").some((d) => d.scheduleId === reminder.id),
+      true,
+    );
     assert.equal(h.kernel.store.mission().outputTokens, 71);
     assert.equal(
       h.workers.length,
@@ -1282,19 +1295,65 @@ test("a decision needs an explicit resolution while any new message releases a p
     assert.equal(h.kernel.store.mission().status, "active");
     await h.kernel.userControl("pause");
     await h.kernel.onHumanInput("Explain the progress");
+    assert.equal(h.kernel.store.mission().status, "paused");
+    await h.kernel.onHumanInput("你继续做吧");
     assert.equal(h.kernel.store.mission().status, "active");
     assert.equal(h.kernel.store.mission().humanPaused, false);
   }));
 
-test("any new human input resumes a paused goal without replaying cancelled tasks", () =>
+test("only a clear continue request resumes a paused goal without replaying cancelled tasks", () =>
   using(async (h) => {
     h.kernel.setGoal("Resume after a human message");
     await h.kernel.userControl("pause");
-    await h.kernel.onHumanInput("Continue the approved work");
+    const budgetStartedAt = h.kernel.store.mission().budgetStartedAt;
+    await h.kernel.onHumanInput("Should I let it continue?");
+    assert.equal(h.kernel.store.mission().status, "paused");
+    await h.kernel.onHumanInput("我问完了，你继续做吧");
     assert.equal(h.kernel.store.mission().status, "active");
     assert.equal(h.kernel.store.mission().humanPaused, false);
     assert.equal(h.kernel.store.mission().pauseSource, undefined);
+    assert.equal(h.kernel.store.mission().budgetStartedAt, budgetStartedAt);
     assert.equal(h.kernel.snapshot().held, false);
+  }));
+
+test("simple spoken continue phrases resume a paused goal without a command", () =>
+  using(async (h) => {
+    h.kernel.setGoal("Resume with ordinary language");
+    for (const phrase of ["你继续", "你启动目标继续吧"]) {
+      await h.kernel.userControl("pause");
+      await h.kernel.onHumanInput(phrase);
+      assert.equal(h.kernel.store.mission().status, "active", phrase);
+    }
+  }));
+
+test("Escape keeps due reminders idle during questions and resumes them on a clear continue request", () =>
+  using(async (h) => {
+    h.kernel.setGoal("Continue after the user finishes asking");
+    const schedule = h.kernel.addSchedule(
+      "Scheduled check",
+      "Continue the approved work",
+      101000,
+    );
+    h.advance(2000);
+    await h.kernel.interruptByUser();
+    await h.kernel.tick();
+    await h.kernel.onHumanInput("What is the current status?");
+    assert.equal(h.kernel.store.mission().status, "paused");
+    await h.kernel.tick();
+    assert.equal(h.kernel.store.schedule(schedule.id).state, "active");
+    assert.equal(
+      h.kernel.store.deliveries("lead").some((d) => d.scheduleId === schedule.id),
+      false,
+    );
+
+    await h.kernel.onHumanInput("问题问完了，你继续吧");
+    assert.equal(h.kernel.store.mission().status, "active");
+    await h.kernel.tick();
+    assert.equal(h.kernel.store.schedule(schedule.id, true).state, "ended");
+    assert.equal(
+      h.kernel.store.deliveries("lead").some((d) => d.scheduleId === schedule.id),
+      true,
+    );
   }));
 
 test("goal update and stop have explicit lifecycle records", () =>

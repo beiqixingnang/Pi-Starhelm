@@ -614,7 +614,7 @@ export default function (pi: ExtensionAPI) {
     // building this model request, including schema changes to existing tools.
     activateMissionTools();
     event.systemPromptOptions.promptGuidelines.push(
-      `Pi Starhelm ${pluginVersion}: plugin tools are direct host registrations. Use current IDs, revisions, epochs and saved results. Esc interrupts current managed work; the next human message resumes a paused goal.`,
+      `Pi Starhelm ${pluginVersion}: plugin tools are direct host registrations. Use current IDs, revisions, epochs and saved results. Esc interrupts current managed work and pauses the goal and scheduled reminders. Answer ordinary user questions while paused; resume only after a clear natural-language continue/restart request.`,
       leadMechanismGuidance,
     );
     const wake =

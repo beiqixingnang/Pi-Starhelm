@@ -59,6 +59,21 @@ const taskRevisionFor = (task: Task, goalId: string) =>
 const CONTINUATION_MAX_ATTEMPTS = 3;
 const CONTINUATION_MAX_NO_PROGRESS = 2;
 const CONTINUATION_BACKOFF_MS = [5_000, 15_000, 30_000] as const;
+const explicitResumeInput = (text: string) => {
+  const input = cleanText(text, 16_000)
+    .trim()
+    .replace(/[，、；,;]+/g, " ")
+    .replace(/\s+/g, " ");
+  if (!input || /[?？]/.test(input)) return false;
+  return (
+    /^(?:(?:好|好的|行|可以|没问题|那|就这些|我问完了|问题问完了)\s*)*(?:(?:请|麻烦)\s*)?(?:你\s*)?(?:(?:启动|重启)(?:当前)?(?:目标|任务|工作)(?:再|然后)?\s*)?(?:继续(?:做|执行|工作|任务|目标|之前的(?:工作|任务))?|接着(?:做|干|执行|工作)?|恢复(?:执行|工作|任务)?|往下(?:做|干)?)(?:吧|了|一下|就行|即可|下去)?[。.!！]*$/i.test(
+      input,
+    ) ||
+    /^(?:(?:okay|ok|all right|thanks|that's all|done)\s*,?\s*)?(?:please\s*)?(?:you\s*)?(?:continue(?:\s+(?:working|the work|the task|the goal))?|resume(?:\s+(?:work|the task|the goal))?|proceed(?:\s+with\s+(?:the\s+)?(?:work|task|goal))?|go ahead)(?:\s+please)?[.!]*$/i.test(
+      input,
+    )
+  );
+};
 
 interface Live {
   epoch: number;
@@ -361,7 +376,8 @@ export class MissionKernel {
     if (
       mission?.status === "paused" &&
       mission.humanPaused &&
-      !this.store.get("relocationHold")
+      !this.store.get("relocationHold") &&
+      explicitResumeInput(text)
     ) {
       await this.interrupting;
       const current = this.store.mission();
@@ -382,7 +398,7 @@ export class MissionKernel {
       this.store.unset("escapeHold");
       this.store.set("mission", current);
       this.store.event("user.message-resumed", current.id, {
-        reason: "New human input resumes the paused goal",
+        reason: "Explicit natural-language continue request resumes the paused goal",
       });
       this.changed();
     } else if (!mission?.humanPaused && !this.store.get("relocationHold")) {
@@ -806,7 +822,7 @@ export class MissionKernel {
         ? mission?.status === "stopped"
           ? "Use goal_pause(goalId) to explicitly restore this retained plan as paused, then goal_edit/goal_update/goal_plan. Do not resume execution just to edit."
           : "Explicitly reopen accepted scope before changing its plan."
-        : "Edit the relevant main or subgoal directly with goal_edit/goal_update/goal_plan. An edit-only request preserves the pause, budget and independent holds. Settle affected live/unknown work before definition changes. Use goal_resume for the AI's own pause or the user's natural-language continue/restart request; no slash command is required.",
+        : "Edit the relevant main or subgoal directly with goal_edit/goal_update/goal_plan. An edit-only request preserves the pause, budget and independent holds. Settle affected live/unknown work before definition changes. Ordinary questions leave a user/Escape pause in place; a clear natural-language continue/restart request resumes the goal and scheduled reminders without a slash command.",
     };
   }
   resumeGoal(

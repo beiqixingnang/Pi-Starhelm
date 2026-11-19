@@ -626,10 +626,20 @@ export function installContextMemory(pi: ExtensionAPI) {
     if (
       open(ctx).mode === "notes" &&
       repair?.window === windowId(ctx) &&
-      repair.phase === "preparing" &&
       message.stopReason !== "error" &&
       message.stopReason !== "aborted"
     ) {
+      if (repair.phase === "exhausted")
+        return {
+          message: {
+            ...message,
+            content: [],
+            stopReason: "error" as const,
+            errorMessage:
+              "Context note preparation allowance exhausted; original history retained. This task has not completed.",
+          },
+        };
+      if (repair.phase !== "preparing") return;
       const completing = message.content.some(
         (block) =>
           block.type === "toolCall" && block.name === "context_rollover",
