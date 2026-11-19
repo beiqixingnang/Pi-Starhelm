@@ -690,73 +690,60 @@ export class MissionPanel {
           Math.max(1, width - 4),
         );
         const titleWidth = Math.max(0, width - visibleWidth(timing) - 4);
-        const expanded = this.expanded.has(item.id),
-          collapsedToolCall = item.kind === "tool-call" && !expanded,
-          displayBody = item.displayBody ?? item.body,
-          expandedBody =
-            item.kind === "tool-call" && item.language !== "diff"
-              ? item.body
-              : displayBody,
-          compactBody = cleanText(displayBody, 600)
-            .replace(/\s+/g, " ")
-            .trim()
-            .slice(0, 120),
-          titleText = collapsedToolCall
-            ? `${item.outcome === "error" ? "✗" : item.outcome === "success" ? "✓" : "…"} ${item.title}${item.language === "diff" ? " · diff" : compactBody ? ` · ${compactBody}` : ""}`
-            : `${item.title}${expanded ? "  [展开]" : ""}`;
         const title = truncateToWidth(
-          titleText,
+          `${item.title}${this.expanded.has(item.id) ? "  [展开]" : ""}`,
           titleWidth,
         );
         card.push(
           `${selected ? "▶" : " "} ${color(this.theme, labelColor, title)}  ${color(this.theme, "dim", timing)}`,
         );
-        if (!collapsedToolCall) {
-          const excerpt = expanded
-            ? expandedBody
-            : displayBody.slice(0, 800);
-          const action = [
-            "tool-call",
-            "tool-result",
-            "tool-pending",
-            "error",
-          ].includes(item.kind);
-          const rendered = action
-            ? cleanText(excerpt, 32000)
-                .replace(/\t/g, "    ")
-                .split("\n")
-                .flatMap((line) =>
-                  wrapTextWithAnsi(
-                    color(
-                      this.theme,
-                      item.language === "diff" && line.startsWith("+")
-                        ? "toolDiffAdded"
-                        : item.language === "diff" && line.startsWith("-")
-                          ? "toolDiffRemoved"
-                          : "toolOutput",
-                      line,
-                    ),
-                    Math.max(1, width - 4),
-                  ).map((wrapped) => "  " + wrapped),
-                )
-            : new Markdown(itemMarkdown(item, excerpt), 2, 0, mdTheme).render(
-                Math.max(1, width - 2),
-              );
-          const visible = expanded
-            ? rendered
-            : rendered.slice(0, item.kind === "tool-result" ? 3 : 12);
-          card.push(...visible.map((line) => `  ${line}`));
-          if (
-            !expanded &&
-            (displayBody.length > excerpt.length ||
-              visible.length < rendered.length)
-          )
-            card.push(color(this.theme, "dim", "  … Enter 展开"));
-        }
+        const expanded = this.expanded.has(item.id),
+          displayBody = item.displayBody ?? item.body,
+          excerpt = expanded ? displayBody : displayBody.slice(0, 800);
+        const action = [
+          "tool-call",
+          "tool-result",
+          "tool-pending",
+          "error",
+        ].includes(item.kind);
+        const rendered = action
+          ? cleanText(excerpt, 32000)
+              .replace(/\t/g, "    ")
+              .split("\n")
+              .flatMap((line) =>
+                wrapTextWithAnsi(
+                  color(
+                    this.theme,
+                    item.language === "diff" && line.startsWith("+")
+                      ? "toolDiffAdded"
+                      : item.language === "diff" && line.startsWith("-")
+                        ? "toolDiffRemoved"
+                        : "toolOutput",
+                    line,
+                  ),
+                  Math.max(1, width - 4),
+                ).map((wrapped) => "  " + wrapped),
+              )
+          : new Markdown(itemMarkdown(item, excerpt), 2, 0, mdTheme).render(
+              Math.max(1, width - 2),
+            );
+        const visible = expanded
+          ? rendered
+          : rendered.slice(
+              0,
+              item.kind === "tool-call" || item.kind === "tool-result" ? 3 : 12,
+            );
+        card.push(...visible.map((line) => `  ${line}`));
+        if (
+          !expanded &&
+          (displayBody.length > excerpt.length ||
+            visible.length < rendered.length)
+        )
+          card.push(color(this.theme, "dim", "  … Enter 展开"));
         body.push(
           ...card.map((line) => panelLine(line, width, background, this.theme)),
         );
-        if (!collapsedToolCall) body.push("");
+        body.push("");
       }
       if (!items.length)
         body.push(

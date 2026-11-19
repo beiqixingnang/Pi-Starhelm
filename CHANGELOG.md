@@ -9,7 +9,7 @@
 
 - Continue asynchronous goal-bound subgoal assignments in the same member session after clean stops; persist checkpoints and stop at bounded attempt or no-progress limits. Keep `wait:true` single-round semantics.
 - Treat Escape as a temporary pause that ordinary human input releases, while preserving explicit mission pauses and independent holds.
-- Collapse tool-call previews to one line and reapply dashboard backgrounds after nested ANSI resets. Show loaded package identity and tool visibility in `/starhelm status`.
+- Reapply dashboard backgrounds after nested ANSI resets. Show loaded package identity and tool visibility in `/starhelm status`.
 
 # 2.18.3 — cache the bottom status panel between terminal repaints (2026-11-06)
 

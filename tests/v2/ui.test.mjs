@@ -880,23 +880,13 @@ test("command and edit previews retain full logical arguments when copied", asyn
     assert.match(visible, /23:41:/);
     assert.match(visible, /耗时 2\.5秒/);
     assert.match(visible, /编辑文件 · module.ts/);
-    const commandRow = visible.split("\n").find((line) => line.includes("执行命令"));
-    assert.match(commandRow, /npm test/);
-    assert.doesNotMatch(commandRow, /timeout/);
-    assert.doesNotMatch(visible, /- old|\+ new/);
+    assert.match(visible, /- old/);
+    assert.match(visible, /\+ new/);
     assert.doesNotMatch(visible, /```/);
-    panel.handleInput("\x1b[A");
-    panel.handleInput("\r");
-    let detailed = panel.render(120).join("\n");
-    assert.match(detailed, /- old/);
-    assert.match(detailed, /\+ new/);
-    for (let i = 0; i < 2; i++) {
+    for (let i = 0; i < 3; i++) {
       panel.handleInput("\x1b[A");
       panel.render(120);
     }
-    panel.handleInput("\r");
-    detailed = panel.render(120).join("\n");
-    assert.match(detailed, /"timeout": 120/);
     panel.handleInput("c");
     await new Promise((resolve) => setImmediate(resolve));
     assert.match(copied, /"command": "npm test"/);
