@@ -209,19 +209,6 @@ export default function (pi: ExtensionAPI) {
       ? resolved.config.model?.trim()
       : process.env.PI_COMPACTION_SUMMARY_MODEL?.trim() ||
         resolved.config.model?.trim();
-    if (!model && resolved.exists)
-      throw new Error(
-        "Summary model is missing from the selected configuration; refusing an implicit fallback to the inference model. Configure compaction_model target=lead/member.",
-      );
-    if (!model && resolved.member) {
-      const parent = readFile(
-        path.join(resolved.member.directory, "compaction-summary.json"),
-      );
-      if (parent.config.model && !parent.config.disabled)
-        throw new Error(
-          "This member has no summary-model route while the lead uses a custom summary model. Configure compaction_model target=member; inference-model fallback is blocked.",
-        );
-    }
     if (model) return model;
     if (!ctx.model?.provider || !ctx.model?.id)
       throw new Error(
@@ -477,14 +464,16 @@ export default function (pi: ExtensionAPI) {
       spec && slash > 0
         ? ctx.modelRegistry.find(spec.slice(0, slash), spec.slice(slash + 1))
         : undefined;
+    const configuredModel =
+      r.file !== legacyFile
+        ? r.config.model?.trim()
+        : process.env.PI_COMPACTION_SUMMARY_MODEL?.trim() ||
+          r.config.model?.trim();
     const budgets = model ? summaryBudgets(model, r.config) : undefined;
     return {
       target: scope,
       engine: r.config.disabled ? "native" : "chunked",
-      modelSelection:
-        spec && !r.exists && !process.env.PI_COMPACTION_SUMMARY_MODEL?.trim()
-          ? "current-model"
-          : "configured",
+      modelSelection: configuredModel ? "configured" : "current-model",
       model:
         spec ??
         (routingError
@@ -609,16 +598,18 @@ export default function (pi: ExtensionAPI) {
       delete config.model;
       config.disabled = true;
     } else {
-      const value = args.model?.trim() ?? config.model?.trim() ?? "",
-        slash = value.indexOf("/");
-      if (
-        slash < 1 ||
-        !ctx.modelRegistry.find(value.slice(0, slash), value.slice(slash + 1))
-      )
-        throw new Error(
-          "Summary model is not configured in Pi; use provider/model-id",
-        );
-      config.model = value;
+      const value = args.model?.trim() ?? config.model?.trim() ?? "";
+      if (value && value !== "current") {
+        const slash = value.indexOf("/");
+        if (
+          slash < 1 ||
+          !ctx.modelRegistry.find(value.slice(0, slash), value.slice(slash + 1))
+        )
+          throw new Error(
+            "Summary model is not configured in Pi; use provider/model-id or current",
+          );
+        config.model = value;
+      } else delete config.model;
       delete config.disabled;
     }
     const file =
@@ -639,7 +630,7 @@ export default function (pi: ExtensionAPI) {
       label: "Summary model settings",
       executionMode: "sequential",
       description:
-        "Inspect or set this lead session's summary model, or defaults for future member sessions. Summary mode uses bounded chunked compaction by default with the current model when no independent route is configured. Explicit configured routes remain authoritative; their failures never fall back to the inference model. target=lead/member; action=status/set/off. off explicitly opts out of chunking into Pi native compaction. This does not compact history, select summary/notes mode or alter the main inference model.",
+        "Inspect or set this lead session's summary model, or defaults for future member sessions. Chunked compaction defaults to the current conversation model; set model=current to return to that default. target=lead/member; action=status/set/off. off opts out of chunking. This does not select summary/notes mode or alter the main inference model.",
       parameters: Type.Object({
         action: Type.Optional(
           Type.Union([
@@ -699,7 +690,7 @@ export default function (pi: ExtensionAPI) {
     });
   pi.registerCommand("compaction-model", {
     description:
-      "Set the summary model for this lead/member conversation or future subagents. Use lead/member provider/model-id, off, or status.",
+      "Set the summary model for this lead/member conversation or future subagents. Use lead/member provider/model-id, current, off, or status.",
     handler: async (args, ctx) => {
       try {
         if (simpleMode(ctx))

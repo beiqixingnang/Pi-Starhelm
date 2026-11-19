@@ -90,16 +90,25 @@ export function board(
           (task.blockedReason ||
             task.state === "failed" ||
             task.state === "interrupted" ||
-            task.processState === "unknown"),
+            task.processState === "unknown" ||
+            task.executionPhase === "submitted_for_review" ||
+            task.executionPhase === "failed_terminal"),
       );
       const status =
-        task?.processState === "unknown"
-          ? "进程待核对"
-          : task?.blockedReason
-            ? "阻塞"
-            : task
-              ? (stateNames[task.state] ?? task.state)
-              : "待命";
+        task?.executionPhase === "continuation_pending"
+          ? "续接等待"
+          : task?.executionPhase === "submitted_for_review"
+            ? "待主模型验收"
+            : task?.executionPhase === "failed_terminal" &&
+                ["failed", "completed"].includes(task.state)
+              ? "续接失败"
+              : task?.processState === "unknown"
+                ? "进程待核对"
+                : task?.blockedReason
+                  ? "阻塞"
+                  : task
+                    ? (stateNames[task.state] ?? task.state)
+                    : "待命";
       const priority =
         task?.state === "running" && !needsAttention
           ? 0

@@ -22,7 +22,7 @@ interface Persistence {
   retryAllowed?(): boolean;
   enabled?(): boolean;
 }
-/** Native recovery runs first. This hook supplies bounded continuation after it settles. */
+/** Retry transient provider failures through Starhelm. */
 export default function installReconnect(
   pi: ExtensionAPI,
   persistence?: Persistence,
@@ -63,7 +63,7 @@ export default function installReconnect(
     if (process.env.MC_V2_RECONNECT)
       raw = { ...raw, ...JSON.parse(process.env.MC_V2_RECONNECT) };
     raw = { ...raw, ...persistence?.read() };
-    return { ...reconnectPolicy(raw, native.enabled), native };
+    return { ...reconnectPolicy(raw), native };
   }
   const clear = (_event: unknown, ctx: ExtensionContext) => {
     reset();
@@ -113,12 +113,12 @@ export default function installReconnect(
       ctx.ui.notify(String(error), "warning");
       return;
     }
-    // Count the native failures already observed, rather than granting ten extra native batches.
+    // Count native failures too, so the shared cooldown begins after a compact burst.
     const used = Math.max(extraAttempts, failures - 1, 0);
     if (
       !config.enabled ||
-      used >= config.maxRetries ||
-      extraAttempts >= config.maxRetries ||
+      (config.maxRetries !== null &&
+        (used >= config.maxRetries || extraAttempts >= config.maxRetries)) ||
       contextLimitError(lastError) ||
       providerFailureKind(lastError) === "external" ||
       persistence?.retryAllowed?.() === false ||
@@ -133,7 +133,7 @@ export default function installReconnect(
     nextAt = Date.now() + config.delayMs;
     ctx.ui.setStatus(
       "mission-reconnect",
-      `重连 ${used + 1}/${config.maxRetries} · ${config.delayMs / 1000}秒后`,
+      `重试 ${used + 1}/${config.maxRetries ?? "∞"} · ${config.delayMs / 1000}秒后`,
     );
     let ready: boolean;
     try {
@@ -159,7 +159,7 @@ export default function installReconnect(
           type: "custom_message" as const,
           customType: "mission-reconnect",
           display: true,
-          content: `Provider request failed; continue the approved request after reconnection (retry ${used + 1}/${config.maxRetries}). Inspect saved tool results before repeating any side effects.`,
+          content: `Transient provider failure. Continue the approved request (retry ${used + 1}/${config.maxRetries ?? "unlimited"}). Inspect saved tool results before repeating any side effects.`,
           details: {
             retry: used + 1,
             maxRetries: config.maxRetries,
@@ -182,7 +182,7 @@ export default function installReconnect(
     extraAttempts,
     nextAt,
     lastError,
-    note: "Native retry runs first; failed lead requests share a persistent burst allowance followed by cooldown probes. Healthy responses clear the fault. off disables supplemental reconnect only.",
+    note: "Starhelm retries transient provider failures by default with no retry limit. Repeated failures enter a cooldown; account, configuration and context errors still need correction. off disables Starhelm retries.",
   });
   const configure = (ctx: ExtensionContext, patch: ReconnectOptions) => {
     if (!persistence) throw new Error("No persistent lead runtime attached");
@@ -198,13 +198,18 @@ export default function installReconnect(
       label: "Provider reconnect settings",
       executionMode: "sequential",
       description:
-        "Inspect or set supplemental provider reconnect policy for this session. This does not disable native retry or renew the shared automatic request allowance.",
+        "Inspect or set Starhelm's provider retry policy for this session. Retries are enabled without a limit by default; this does not renew the shared cooldown allowance.",
       parameters: Type.Object({
         action: Type.Optional(
           Type.Union([Type.Literal("status"), Type.Literal("set")]),
         ),
         enabled: Type.Optional(Type.Boolean()),
-        maxRetries: Type.Optional(Type.Integer({ minimum: 0, maximum: 100 })),
+        maxRetries: Type.Optional(
+          Type.Union([
+            Type.Integer({ minimum: 0, maximum: 100 }),
+            Type.Null(),
+          ]),
+        ),
         delayMs: Type.Optional(Type.Integer({ minimum: 0, maximum: 300000 })),
       }),
       async execute(_id, args, _signal, _update, ctx) {
@@ -230,7 +235,7 @@ export default function installReconnect(
   if (!process.env.MC_V2_MEMBER)
     pi.registerCommand("reconnect", {
       description:
-        "Provider recovery: status | on | off | retries <0..100> | delay <seconds>. Native Pi retry remains separate.",
+        "Starhelm provider retry: status | on | off | retries <0..100|unlimited> | delay <seconds>. Default retries have no limit.",
       handler: async (args, ctx) => {
         try {
           if (persistence?.enabled?.() === false)
@@ -242,11 +247,12 @@ export default function installReconnect(
           const raw: ReconnectOptions = {};
           if (action === "on" || action === "off")
             raw.enabled = action === "on";
-          else if (action === "retries") raw.maxRetries = Number(value);
+          else if (action === "retries")
+            raw.maxRetries = value === "unlimited" ? null : Number(value);
           else if (action === "delay") raw.delayMs = Number(value) * 1000;
           else if (action !== "status")
             throw new Error(
-              "Use /reconnect status|on|off|retries N|delay seconds",
+              "Use /reconnect status|on|off|retries N|retries unlimited|delay seconds",
             );
           const report =
             action !== "status" ? configure(ctx, raw) : inspect(ctx);

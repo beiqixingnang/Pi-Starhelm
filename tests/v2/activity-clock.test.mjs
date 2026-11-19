@@ -309,7 +309,7 @@ test("waiting for a business decision excludes elapsed time instead of exhaustin
       h.kernel.leadSettled();
       h.advance(24 * 3600000);
       await h.kernel.tick();
-      h.kernel.onHumanInput("Use A");
+      await h.kernel.onHumanInput("Use A");
       h.kernel.resolveDecision(h.kernel.store.mission().decision.id, "Use A");
       assert.equal(h.kernel.store.mission().status, "active");
       assert.equal(h.kernel.snapshot().activity.activeMs, 5000);

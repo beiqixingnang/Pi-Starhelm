@@ -101,7 +101,7 @@ test("one user resume after reload releases the tagged workspace block and retai
       0,
     );
     const originalBusiness = h.kernel.goals.node(business.id);
-    h.kernel.onHumanInput("继续修改 README");
+    await h.kernel.onHumanInput("继续修改 README");
     assert.equal(h.kernel.snapshot().workspaceHeld, true);
     assert.equal(h.kernel.recoveryPlan().userCommand, "/mission resume");
     await h.reload();

@@ -85,11 +85,15 @@ const scopeSchema = Type.Object({
     }),
   ),
 });
+const pluginManifestUrl = new URL("../../package.json", import.meta.url);
 const pluginManifest = JSON.parse(
-  fsSync.readFileSync(new URL("../../package.json", import.meta.url), "utf8"),
+  fsSync.readFileSync(pluginManifestUrl, "utf8"),
 );
 const pluginVersion: string = pluginManifest.version;
 const pluginName: string = pluginManifest.name;
+const pluginRoot = fsSync.realpathSync.native(
+  path.dirname(fileURLToPath(pluginManifestUrl)),
+);
 
 const WorkspaceSchema = Type.Object({
   root: optional(Type.String()),
@@ -249,6 +253,7 @@ export default function (pi: ExtensionAPI) {
     return {
       packageName: pluginName,
       version: pluginVersion,
+      packageRoot: pluginRoot,
       toolDelivery: "direct model declarations from the host registry",
       registeredMissionTools: missionTools().length,
       recoveryTools: Object.fromEntries(
@@ -594,13 +599,9 @@ export default function (pi: ExtensionAPI) {
     await close();
     ctx = undefined;
   });
-  pi.on("input", (event) => {
-    if (
-      !simpleMode() &&
-      event.source === "interactive" &&
-      !event.text.startsWith("/")
-    )
-      kernel?.onHumanInput(event.text);
+  pi.on("input", async (event) => {
+    if (!simpleMode() && event.source !== "extension")
+      await kernel?.onHumanInput(event.text);
   });
   pi.on("before_agent_start", (event, context) => {
     ctx = context;
@@ -613,7 +614,7 @@ export default function (pi: ExtensionAPI) {
     // building this model request, including schema changes to existing tools.
     activateMissionTools();
     event.systemPromptOptions.promptGuidelines.push(
-      `Pi Starhelm ${pluginVersion}: plugin tools are direct host registrations. Use current IDs, revisions, epochs, permissions and recoveryPlan as the runtime contract. Reload does not attest stopped processes; explicit holds remain authoritative.`,
+      `Pi Starhelm ${pluginVersion}: plugin tools are direct host registrations. Use current IDs, revisions, epochs and saved results. Esc interrupts current managed work; the next human message resumes a paused goal.`,
       leadMechanismGuidance,
     );
     const wake =
@@ -1108,7 +1109,7 @@ export default function (pi: ExtensionAPI) {
   tool(
     "team_send",
     "Assign team task",
-    "Create a durable member task. goalId is the legacy single association; goalIds associates multiple leaf goals and stores each revision. wait controls whether the call waits for task settlement; timing fields configure execution and queue limits.",
+    "Create a durable member task. goalId is the legacy single association; goalIds associates multiple leaf goals and stores each revision. Asynchronous goal-bound child assignments may continue the same worker session after a clean stop until evidence is submitted or a bounded retry limit is reached. wait:true preserves one-round collection semantics.",
     Type.Object({
       to: Type.String(),
       message: Type.String({ minLength: 1, maxLength: 200000 }),
@@ -1129,6 +1130,9 @@ export default function (pi: ExtensionAPI) {
         queueTimeoutMs: args.queueTimeoutMs,
         goalId: args.goalId,
         goalIds: args.goalIds,
+        continuationEnabled:
+          !args.wait && !oneShot(context) &&
+          Boolean(args.goalId || args.goalIds?.length),
       });
       if (args.wait || oneShot(context))
         return collected(await waitForTask(task.id, signal), [task.id]);
@@ -1171,7 +1175,7 @@ export default function (pi: ExtensionAPI) {
   tool(
     "team_broadcast",
     "Assign to team",
-    "Create one durable task per selected member with the same message and optional goalId/goalIds associations.",
+    "Create one durable task per selected member with the same message and optional goalId/goalIds associations. Asynchronous goal-bound child assignments may continue the same worker session after a clean stop until evidence is submitted or a bounded retry limit is reached.",
     Type.Object({
       members: Type.Array(Type.String(), { minItems: 1, maxItems: 16 }),
       message: Type.String({ maxLength: 200000 }),
@@ -1191,6 +1195,8 @@ export default function (pi: ExtensionAPI) {
             ...taskTiming(args, current().settings.taskTimeoutMs),
             goalId: args.goalId,
             goalIds: args.goalIds,
+            continuationEnabled:
+              !oneShot(context) && Boolean(args.goalId || args.goalIds?.length),
           }),
         ),
       );
@@ -1404,6 +1410,8 @@ export default function (pi: ExtensionAPI) {
               ...timing,
               goalId,
               goalIds,
+              continuationEnabled:
+                !oneShot(context) && Boolean(goalId || goalIds?.length),
             });
             previous = task.id;
             return task;
@@ -1984,16 +1992,6 @@ export default function (pi: ExtensionAPI) {
       ),
   );
   tool(
-    "goal_stop",
-    "Stop goal",
-    "Stop and archive a main goal by ID (or the selected goal). The plugin cancels only that goal's unfinished work, suppresses its stale deliveries and preserves its history; repeated calls are idempotent.",
-    Type.Object({
-      goalId: Type.Optional(Type.String()),
-      reason: Type.Optional(Type.String({ maxLength: 2000 })),
-    }),
-    (args) => current().stopGoal(args.goalId, args.reason),
-  );
-  tool(
     "mission_complete",
     "Accept mission",
     "Mark the whole approved objective complete only after all work has settled and every acceptance criterion has verified evidence. Answering an intermediate question is not completion.",
@@ -2260,7 +2258,7 @@ export default function (pi: ExtensionAPI) {
   tool(
     "mission_capabilities",
     "Pi Starhelm tool catalog",
-    "List every Pi Starhelm tool from the host registry, its active model visibility and available command counterparts. Tools are declared directly to the lead; no discovery call is required before using them. Optionally filter by toolName and include its schema.",
+    "Summarize Starhelm tool visibility, or inspect one tool by name. Tools are declared directly to the lead; no discovery call is required before using them.",
     Type.Object({
       toolName: Type.Optional(Type.String()),
       includeSchemas: Type.Optional(Type.Boolean()),
@@ -2268,6 +2266,18 @@ export default function (pi: ExtensionAPI) {
     (args) => {
       const active = new Set(pi.getActiveTools()),
         all = missionTools();
+      if (!args.toolName && !args.includeSchemas)
+        return {
+          packageName: pluginName,
+          version: pluginVersion,
+          tools: {
+            total: all.length,
+            active: all.filter((t) => active.has(t.name)).length,
+            inactive: all
+              .filter((t) => !active.has(t.name))
+              .map((t) => t.name),
+          },
+        };
       const selected = args.toolName
         ? all.filter((t) => t.name === args.toolName)
         : all;
@@ -2275,12 +2285,7 @@ export default function (pi: ExtensionAPI) {
         throw new Error("Unknown Pi Starhelm tool");
       const shown =
         args.includeSchemas && !args.toolName ? selected.slice(0, 5) : selected;
-      const m = current().store.mission();
       return {
-        runtime: runtimeIdentity(),
-        recoveryPlan: current().recoveryPlan(),
-        visibility:
-          "Tools are directly declared from one host registry, refreshed at session start and before model requests",
         tools: shown.map((t) => ({
           name: t.name,
           description: args.toolName
@@ -2295,46 +2300,6 @@ export default function (pi: ExtensionAPI) {
           ...(args.includeSchemas ? { parameters: t.parameters } : {}),
         })),
         schemaPageLimited: shown.length < selected.length,
-        unknownExecutions: current()
-          .store.members()
-          .flatMap((member) =>
-            current()
-              .store.memberTasks(member.id)
-              .filter((t) => t.processState === "unknown")
-              .map((t) => ({
-                taskId: t.id,
-                expectedEpoch: t.epoch,
-                member: t.member,
-                state: t.state,
-              })),
-          ),
-        mission: m
-          ? {
-              goalId: m.id,
-              revision: m.revision ?? 0,
-              status: m.status,
-              blocker: m.blocker,
-            }
-          : undefined,
-        commandTools: {
-          reconcile: "mission_reconcile",
-          report: "mission_report",
-          export: "mission_export",
-          history: "mission_history",
-          compact: "mission_compact",
-          summaryModel: "compaction_model",
-          reconnect: "reconnect_config",
-          schedules: "schedule",
-          memberMessage: "team_message",
-          pauseEditableGoal: "goal_pause",
-          resumeGoal: "goal_resume",
-          runtimeProgressResume: "mission_control",
-        },
-        userControls: [
-          "Natural-language goal pause/continue/edit requests are carried out by the AI with goal_pause, goal_resume and goal_edit/goal_update. Direct /mission commands remain available; budget renewal and independent workspace authorization retain their own controls",
-          "Workspace authorization: direct natural-language rename/switch request or /project allow; project_status exposes the exact one-use grant for project_apply",
-          "Interactive display/editor/copy UI remains user-owned",
-        ],
       };
     },
   );
@@ -2602,10 +2567,21 @@ export default function (pi: ExtensionAPI) {
         if (requested === "status") {
           context.ui.notify(
             JSON.stringify({
+              plugin: {
+                packageName: pluginName,
+                version: pluginVersion,
+                packageRoot: pluginRoot,
+                registeredMissionTools: missionTools().length,
+                activeMissionTools: missionTools().filter((tool) =>
+                  pi.getActiveTools().includes(tool.name),
+                ).length,
+              },
               mode: modeState.mode,
               activeTools: pi.getActiveTools().length,
               simpleModeNote:
-                "Simple mode keeps Pi native tools and this switch command available.",
+                simpleMode()
+                  ? "The plugin is loaded; simple mode keeps Pi native tools and this switch command available while hiding Starhelm model tools."
+                  : "The plugin is loaded and its Starhelm model tools are available.",
             }),
             "info",
           );
@@ -2674,7 +2650,7 @@ export default function (pi: ExtensionAPI) {
         context.ui.setStatus("starhelm-mode", "复杂模式 · Starhelm");
         refresh();
         context.ui.notify(
-          "已开启复杂模式。切换前暂停的任务仍保持暂停；需要时用 /mission resume 明确继续。",
+          "已开启复杂模式。切换前暂停的目标会在下一条消息后继续。",
           "info",
         );
       } catch (error) {
@@ -2685,7 +2661,7 @@ export default function (pi: ExtensionAPI) {
 
   pi.registerCommand("mission", {
     description:
-      "Mission dashboard; goals [export <new-file>|activate <id>|depth <3..12>|skip|cancel <id> <reason>] | policy status|business-only | time|timeline | view <member> | start <objective> | status | pause | resume | stop | report <seconds> | schedules | unschedule <id> | export <new-file.jsonl> | archive <new-directory>",
+      "Mission dashboard; goals [export <new-file>|activate <id>|depth <3..12>|skip|cancel <id> <reason>] | policy status|business-only | time|timeline | view <member> | start <objective> | status | pause | resume | report <seconds> | schedules | unschedule <id> | export <new-file.jsonl> | archive <new-directory>",
     handler: async (args, context) => {
       try {
         if (simpleMode())
@@ -2728,7 +2704,7 @@ export default function (pi: ExtensionAPI) {
               reason = values.slice(1).join(" ");
             if (!node.parentId)
               throw new Error(
-                "Use /mission stop to stop the current main goal",
+                "Use Esc to interrupt current work",
               );
             if (!reason.trim())
               throw new Error("Provide a reason for excluding this goal");
@@ -2773,7 +2749,7 @@ export default function (pi: ExtensionAPI) {
           const m = k.store.mission();
           if (m && !["complete", "stopped"].includes(m.status))
             throw new Error(
-              "An unfinished mission already exists; resume it or explicitly stop it before starting another",
+              "An unfinished mission already exists; continue it or complete its goal first",
             );
           const parts = rest
             .join(" ")
@@ -2786,14 +2762,14 @@ export default function (pi: ExtensionAPI) {
           );
           return;
         }
-        if (["pause", "resume", "stop"].includes(command)) {
+        if (["pause", "resume"].includes(command)) {
           const workspaceHeld = Boolean(k.store.get("relocationHold"));
           if (command !== "resume")
             pi.events.emit("mission-control:interrupt", {
               reason: `User ${command}`,
             });
-          await k.userControl(command as any);
-          if (command !== "resume" && !context.isIdle()) context.abort();
+          await k.userControl(command as "pause" | "resume");
+          if (command === "pause" && !context.isIdle()) context.abort();
           context.ui.notify(
             command === "resume" && workspaceHeld
               ? "已解除迁移暂停；原有业务阻塞和待核对任务仍按实际状态处理。"
@@ -2917,21 +2893,4 @@ export default function (pi: ExtensionAPI) {
     enabled: () => !simpleMode(),
   });
   installProject(pi, current);
-  pi.registerCommand("stop", {
-    description:
-      "Stop the main run and this mission's task tree; preserve identities and history.",
-    handler: async (_args, context) => {
-      if (simpleMode()) {
-        context.ui.notify(
-          "Starhelm simple mode is active; use /starhelm complex first.",
-          "warning",
-        );
-        return;
-      }
-      pi.events.emit("mission-control:interrupt", { reason: "User stop" });
-      if (current().store.mission()) await current().userControl("stop");
-      if (!context.isIdle()) context.abort();
-      context.ui.notify("Stopped; results and member history retained", "info");
-    },
-  });
 }

@@ -14,8 +14,18 @@ export function panelLine(
 ) {
   const line = truncateToWidth(text, Math.max(1, width));
   if (!background || !theme?.bg) return line;
-  return theme.bg(
-    background,
-    line + " ".repeat(Math.max(0, width - visibleWidth(line))),
-  );
+  const padded = line + " ".repeat(Math.max(0, width - visibleWidth(line)));
+  const marker = "x";
+  const sample = theme.bg(background, marker);
+  const markerIndex = sample.indexOf(marker);
+  if (markerIndex < 0) return padded;
+  const start = sample.slice(0, markerIndex);
+  const end = sample.slice(markerIndex + marker.length);
+  const parts = padded.split(/(\x1b\[[0-?]*[ -/]*m)/g);
+  let painted = start;
+  for (const part of parts)
+    painted += /^\x1b\[[0-?]*[ -/]*m$/.test(part)
+      ? part + start
+      : part;
+  return painted + end;
 }

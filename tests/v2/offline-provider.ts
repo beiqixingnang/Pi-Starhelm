@@ -52,6 +52,7 @@ export default function (pi: ExtensionAPI) {
             pid: process.pid,
             sessionId: ctx.sessionManager.getSessionId(),
             cwd: ctx.cwd,
+            idle: ctx.isIdle(),
           }) + "\n",
         );
     },
@@ -358,6 +359,13 @@ export default function (pi: ExtensionAPI) {
             else tool(goalCommand.name, goalCommand.args);
             stream.push({ type: "start", partial: message });
             stream.push({ type: "done", reason: message.stopReason, message });
+            stream.end();
+            return;
+          }
+          if (goalUser === "继续已批准的任务，不要重复已完成的命令。") {
+            answer("ESCAPE_CONTINUATION_ACK");
+            stream.push({ type: "start", partial: message });
+            stream.push({ type: "done", reason: "stop", message });
             stream.end();
             return;
           }
@@ -704,7 +712,15 @@ export default function (pi: ExtensionAPI) {
                 fault.error ??
                   "custom station disconnected without a standard status code",
               );
-            answer(`RECOVERED_REQUEST_${attempt}`);
+            if (fault.submissions) {
+              if (
+                last?.role === "toolResult" &&
+                last.toolName === "goal_submit"
+              ) {
+                if (last.isError) throw new Error(textOf(last));
+                answer(`RECOVERED_REQUEST_${attempt}`);
+              } else tool("goal_submit", { submissions: fault.submissions });
+            } else answer(`RECOVERED_REQUEST_${attempt}`);
             stream.push({ type: "start", partial: message });
             stream.push({ type: "done", reason: "stop", message });
             stream.end();

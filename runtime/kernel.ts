@@ -56,6 +56,9 @@ const taskGoalIds = (task: Pick<Task, "goalId" | "goalIds" | "missionId">) =>
 const taskRevisionFor = (task: Task, goalId: string) =>
   task.goalRevisions?.[goalId] ??
   (task.goalId === goalId ? (task.goalRevision ?? 0) : undefined);
+const CONTINUATION_MAX_ATTEMPTS = 3;
+const CONTINUATION_MAX_NO_PROGRESS = 2;
+const CONTINUATION_BACKOFF_MS = [5_000, 15_000, 30_000] as const;
 
 interface Live {
   epoch: number;
@@ -331,7 +334,7 @@ export class MissionKernel {
     }, 1000);
     this.timer.unref?.();
   }
-  onHumanInput(text: string) {
+  async onHumanInput(text: string) {
     this.lastHuman = cleanText(text, 16000);
     this.store.set("lastHuman", this.lastHuman);
     const mission = this.store.mission();
@@ -339,10 +342,6 @@ export class MissionKernel {
       "humanVersion",
       (this.store.get<number>("humanVersion") ?? 0) + 1,
     );
-    if (!mission?.humanPaused && !this.store.get("relocationHold")) {
-      this.userHold = false;
-      this.store.unset("escapeHold");
-    }
     if (mission?.decision)
       this.store.event("decision.human-input", mission.decision.id);
     if (this.reservation) {
@@ -358,6 +357,37 @@ export class MissionKernel {
         this.store.putDelivery(d);
       }
       this.reservation = undefined;
+    }
+    if (
+      mission?.status === "paused" &&
+      mission.humanPaused &&
+      !this.store.get("relocationHold")
+    ) {
+      await this.interrupting;
+      const current = this.store.mission();
+      if (
+        current?.id !== mission.id ||
+        current.status !== "paused" ||
+        !current.humanPaused ||
+        this.store.get("relocationHold")
+      )
+        return;
+      current.status = "active";
+      current.humanPaused = false;
+      delete current.pauseSource;
+      delete current.reason;
+      current.nextContinueAt = this.now() + 1000;
+      current.updatedAt = this.now();
+      this.userHold = false;
+      this.store.unset("escapeHold");
+      this.store.set("mission", current);
+      this.store.event("user.message-resumed", current.id, {
+        reason: "New human input resumes the paused goal",
+      });
+      this.changed();
+    } else if (!mission?.humanPaused && !this.store.get("relocationHold")) {
+      this.userHold = false;
+      this.store.unset("escapeHold");
     }
   }
   decisionPolicy() {
@@ -1719,6 +1749,7 @@ export class MissionKernel {
       queueTimeoutMs?: number;
       goalId?: string;
       goalIds?: string[];
+      continuationEnabled?: boolean;
     } = {},
   ): Task {
     if (this.relocating)
@@ -1799,6 +1830,14 @@ export class MissionKernel {
       goalRevisions: Object.fromEntries(
         goals.map((assigned) => [assigned.id, assigned.revision]),
       ),
+      continuationEnabled:
+        Boolean(options.continuationEnabled) &&
+        (uniqueGoalIds.length > 1 ||
+          uniqueGoalIds.some((goalId) =>
+            Boolean(this.goals.node(goalId).parentId),
+          )),
+      workerActionCount: 0,
+      continuationActionCount: 0,
       memberId: member.id,
       member: member.name,
       parentId: parent?.id,
@@ -1849,6 +1888,7 @@ export class MissionKernel {
         queueTimeoutMs: old.queueTimeoutMs,
         goalId: old.goalId,
         goalIds: old.goalIds,
+        continuationEnabled: old.continuationEnabled,
       },
     );
   }
@@ -2503,7 +2543,7 @@ export class MissionKernel {
     this.reservation = undefined;
     mission.status = "paused";
     mission.humanPaused = true;
-    mission.pauseSource = "user";
+    mission.pauseSource = "escape";
     mission.reason =
       "User interrupted with Escape; inspect retained results before explicitly continuing";
     mission.updatedAt = this.now();
@@ -3598,6 +3638,11 @@ export class MissionKernel {
           .filter((t) => t.state === "queued")) {
           if (task.missionId !== mission?.id) continue;
           if (
+            task.nextContinuationAt !== undefined &&
+            task.nextContinuationAt > now
+          )
+            continue;
+          if (
             taskGoalIds(task).some(
               (goalId) => this.goals.blockers(goalId).length,
             )
@@ -3619,6 +3664,7 @@ export class MissionKernel {
           }
           if (
             task.phase === "work" &&
+            !task.continuationAttempts &&
             task.queueTimeoutMs &&
             now - task.createdAt >= task.queueTimeoutMs
           ) {
@@ -4054,6 +4100,8 @@ export class MissionKernel {
     delete task.boundaryRequested;
     this.previews.delete(member.id);
     task.state = "running";
+    task.executionPhase = task.continuationEnabled ? "running" : "none";
+    delete task.nextContinuationAt;
     task.epoch++;
     task.startedAt = this.now();
     task.updatedAt = this.now();
@@ -4332,12 +4380,129 @@ export class MissionKernel {
       this.store.putTask(task);
       return;
     }
-    task.state = outcome.ok ? "completed" : "failed";
+    const continuationGoals = task.goalIds?.length
+      ? task.goalIds
+      : task.goalId
+        ? [task.goalId]
+        : [];
+    const canContinue =
+      outcome.ok &&
+      outcome.processState === "stopped" &&
+      outcome.cleanSettlement !== false &&
+      !task.boundaryRequested &&
+      !task.reviewFor &&
+      task.phase === "work" &&
+      task.continuationEnabled &&
+      !children.length &&
+      !unseen;
+    if (canContinue) {
+      const currentGoals = continuationGoals.map((goalId) =>
+        this.goals.node(goalId),
+      );
+      const revisionsMatch =
+        currentGoals.length > 0 &&
+        currentGoals.every(
+          (goal) =>
+            (taskRevisionFor(task, goal.id) ?? goal.revision) ===
+            goal.revision,
+        );
+      const submitted = revisionsMatch && currentGoals.every((goal) => {
+        const submission = goal.submissionId
+          ? this.store.goalSubmission(goal.submissionId)
+          : undefined;
+        return Boolean(
+          submission &&
+            submission.state === "current" &&
+            submission.taskId === task.id &&
+            submission.revision === goal.revision,
+        );
+      });
+      if (submitted) {
+        task.executionPhase = "submitted_for_review";
+      } else if (
+        revisionsMatch &&
+        !currentGoals.some((goal) => this.goals.blockers(goal.id).length)
+      ) {
+        const attempts = (task.continuationAttempts ?? 0) + 1;
+        const actions = task.workerActionCount ?? 0;
+        const noProgress =
+          actions === (task.continuationActionCount ?? 0)
+            ? (task.noProgressCount ?? 0) + 1
+            : 0;
+        task.continuationAttempts = attempts;
+        task.continuationActionCount = actions;
+        task.noProgressCount = noProgress;
+        if (
+          attempts <= CONTINUATION_MAX_ATTEMPTS &&
+          noProgress < CONTINUATION_MAX_NO_PROGRESS
+        ) {
+          const delay =
+            CONTINUATION_BACKOFF_MS[attempts - 1] ??
+            CONTINUATION_BACKOFF_MS[CONTINUATION_BACKOFF_MS.length - 1];
+          const checkpoint = this.store.artifact(
+            `${task.id}-${task.epoch}-continuation`,
+            "checkpoint",
+            JSON.stringify(
+              {
+                assignmentId: task.id,
+                goalIds: continuationGoals,
+                goalRevisions: task.goalRevisions,
+                attempt: attempts,
+                noProgress,
+                workerActionCount: actions,
+                text: cleanText(outcome.text, 2000),
+                sessionFile: task.sessionFile,
+                at: this.now(),
+              },
+              null,
+              2,
+            ),
+          );
+          task.executionPhase = "continuation_pending";
+          task.state = "queued";
+          task.nextContinuationAt = this.now() + delay;
+          task.continuation =
+            `The previous worker turn ended before evidence was submitted. Continue the same goal assignment (continuation ${attempts}/${CONTINUATION_MAX_ATTEMPTS}) after ${delay}ms. Inspect the retained session, files and checkpoint before acting; do not repeat completed commands. Checkpoint: ${checkpoint}`;
+          this.store.putTask(task);
+          this.store.event("task.continuation-pending", task.id, {
+            attempt: attempts,
+            noProgress,
+            nextAt: task.nextContinuationAt,
+            checkpoint,
+          });
+          return;
+        }
+        task.executionPhase = "failed_terminal";
+        task.error =
+          noProgress >= CONTINUATION_MAX_NO_PROGRESS
+            ? "Worker made no tool progress in consecutive continuation attempts. Inspect the retained checkpoint before retrying."
+            : "Worker stopped before submitting goal evidence after the bounded continuation attempts.";
+      } else {
+        task.executionPhase = "failed_terminal";
+        task.error =
+          "Goal revision changed or the assigned goal became blocked; automatic continuation stopped for lead review.";
+      }
+    } else if (task.continuationEnabled && task.executionPhase === "running") {
+      task.executionPhase = "failed_terminal";
+      if (outcome.ok && !task.error)
+        task.error =
+          outcome.processState === "unknown"
+            ? "Worker process state is unknown; automatic continuation requires process reconciliation."
+            : "Worker did not settle cleanly; automatic continuation stopped for lead review.";
+    }
+    task.state =
+      task.continuationEnabled && task.executionPhase === "failed_terminal"
+        ? "failed"
+        : outcome.ok
+          ? "completed"
+          : "failed";
     task.finishedAt = this.now();
-    task.error = outcome.error;
+    task.error = task.error ?? outcome.error;
     task.protocolDiagnostic = outcome.protocolDiagnostic;
     task.summary = cleanText(
-      outcome.text || outcome.error || "(no public response)",
+      task.error
+        ? [outcome.text, task.error].filter(Boolean).join("\n\n")
+        : outcome.text || outcome.error || "(no public response)",
       2000,
     );
     task.resultPath = this.store.artifact(
@@ -4433,6 +4598,8 @@ export class MissionKernel {
           result = { ...this.checkpoint(task), denied: true };
         else {
           (live.tools ??= new Set()).add(request.callId);
+          task.workerActionCount = (task.workerActionCount ?? 0) + 1;
+          this.store.putTask(task);
           result = { action: "run" };
         }
       } else if (request.op === "tool-end") {
@@ -4598,6 +4765,7 @@ export class MissionKernel {
             queueTimeoutMs: request.queueTimeoutMs,
             goalId: request.goalId,
             goalIds: request.goalIds,
+            continuationEnabled: task.continuationEnabled,
           });
       } else if (request.op === "decision") {
         task.state = "waiting";

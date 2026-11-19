@@ -101,6 +101,37 @@ test("workspace pause has one accurate status and a manual resume command in com
     assert.doesNotMatch(board(kernel, 160).join("\n"), /迁移后待恢复/);
   }));
 
+test("paused main-goal rows retain the full background after nested ANSI resets", () =>
+  withRoster(async ({ kernel }) => {
+    kernel.setGoal(
+      "Paused Verilog main goal with a deliberately long title ".repeat(3),
+      ["Keep the paused row uniformly painted"],
+    );
+    await kernel.interruptByUser();
+    const theme = {
+      bg: (_name, text) => `\x1b[48;5;13m${text}\x1b[0m`,
+      fg: (_name, text) => `\x1b[38;5;5m${text}\x1b[0m`,
+      bold: (text) => `\x1b[1m${text}\x1b[0m`,
+    };
+    const lines = board(kernel, 140, false, theme, 42);
+    const target = lines.find((line) => /Paused Verilog main goal/.test(line));
+    assert.ok(target);
+    assert.match(target, /暂停中/);
+    assert.equal(visibleWidth(target), 140);
+    const backgrounds = [];
+    let painted = false;
+    for (const part of target.split(/(\x1b\[[0-9;]*m)/g)) {
+      if (part.startsWith("\x1b[")) {
+        if (/\x1b\[(?:0|49)m/.test(part)) painted = false;
+        if (/\x1b\[48(?:;|m)/.test(part)) painted = true;
+      } else {
+        for (const character of part) backgrounds.push(painted);
+      }
+    }
+    assert.ok(backgrounds.length > 0);
+    assert.ok(backgrounds.every(Boolean));
+  }));
+
 test("dashboard rendering uses bounded roster data instead of a full task snapshot", () =>
   withRoster(async ({ kernel, add, dir }) => {
     kernel.setGoal("Dashboard fixture", ["Keep the compact status current"]);
@@ -849,13 +880,23 @@ test("command and edit previews retain full logical arguments when copied", asyn
     assert.match(visible, /23:41:/);
     assert.match(visible, /耗时 2\.5秒/);
     assert.match(visible, /编辑文件 · module.ts/);
-    assert.match(visible, /- old/);
-    assert.match(visible, /\+ new/);
+    const commandRow = visible.split("\n").find((line) => line.includes("执行命令"));
+    assert.match(commandRow, /npm test/);
+    assert.doesNotMatch(commandRow, /timeout/);
+    assert.doesNotMatch(visible, /- old|\+ new/);
     assert.doesNotMatch(visible, /```/);
-    for (let i = 0; i < 3; i++) {
+    panel.handleInput("\x1b[A");
+    panel.handleInput("\r");
+    let detailed = panel.render(120).join("\n");
+    assert.match(detailed, /- old/);
+    assert.match(detailed, /\+ new/);
+    for (let i = 0; i < 2; i++) {
       panel.handleInput("\x1b[A");
       panel.render(120);
     }
+    panel.handleInput("\r");
+    detailed = panel.render(120).join("\n");
+    assert.match(detailed, /"timeout": 120/);
     panel.handleInput("c");
     await new Promise((resolve) => setImmediate(resolve));
     assert.match(copied, /"command": "npm test"/);

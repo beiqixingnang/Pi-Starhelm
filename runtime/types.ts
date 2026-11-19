@@ -8,6 +8,13 @@ export type TaskState =
   | "failed"
   | "cancelled"
   | "interrupted";
+export type TaskExecutionPhase =
+  | "none"
+  | "running"
+  | "continuation_pending"
+  | "blocked"
+  | "submitted_for_review"
+  | "failed_terminal";
 export type DeliveryState =
   | "pending"
   | "leased"
@@ -77,6 +84,13 @@ export interface Task {
   attemptOf?: string;
   dependsOn?: string;
   state: TaskState;
+  executionPhase?: TaskExecutionPhase;
+  continuationEnabled?: boolean;
+  continuationAttempts?: number;
+  noProgressCount?: number;
+  workerActionCount?: number;
+  continuationActionCount?: number;
+  nextContinuationAt?: number;
   epoch: number;
   phase: "work" | "review";
   inputPath: string;
@@ -304,7 +318,7 @@ export interface Mission {
   lastReportAt: number;
   nextContinueAt: number;
   humanPaused: boolean;
-  pauseSource?: "user" | "agent";
+  pauseSource?: "user" | "agent" | "escape";
   revision?: number;
   archivedAt?: number;
   archiveReason?: string;

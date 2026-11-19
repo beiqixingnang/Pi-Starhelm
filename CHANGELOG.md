@@ -1,3 +1,16 @@
+# 2.18.5 — simpler resume and Starhelm-owned retries (2026-11-19)
+
+- Resume any paused goal when the user sends a new message; Esc interrupts the current task tree without replaying cancelled tasks. Remove user-facing mission stop commands.
+- Enable unbounded Starhelm retries for transient provider errors by default and decouple them from Pi's native retry setting.
+- Default compaction to the current conversation model, add `current` to clear a model override, and shorten the default tool-catalog response.
+- Refresh the repository's Pi source reference and dependency lock to v1.5.2.
+
+# 2.18.4 — bounded worker continuation and clearer in-session status (2026-11-19)
+
+- Continue asynchronous goal-bound subgoal assignments in the same member session after clean stops; persist checkpoints and stop at bounded attempt or no-progress limits. Keep `wait:true` single-round semantics.
+- Treat Escape as a temporary pause that ordinary human input releases, while preserving explicit mission pauses and independent holds.
+- Collapse tool-call previews to one line and reapply dashboard backgrounds after nested ANSI resets. Show loaded package identity and tool visibility in `/starhelm status`.
+
 # 2.18.3 — cache the bottom status panel between terminal repaints (2026-11-06)
 
 - Reuse the bottom status widget's rendered rows while the database state, terminal size, theme and visible minute remain unchanged. Keyboard input and scroll repaints no longer re-query roster state and rebuild the panel each frame.

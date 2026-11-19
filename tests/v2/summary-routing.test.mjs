@@ -25,6 +25,7 @@ async function using(run) {
   });
   const notifications = [],
     calls = [],
+    modelLookups = [],
     bus = createEventBus(),
     states = [];
   bus.on("mission-control:compaction-state", (state) => states.push(state));
@@ -42,8 +43,10 @@ async function using(run) {
       getBranch: () => [],
     },
     modelRegistry: {
-      find: (provider, id) =>
-        provider === model.provider && id === model.id ? model : undefined,
+      find: (provider, id) => {
+        modelLookups.push(`${provider}/${id}`);
+        return provider === model.provider && id === model.id ? model : undefined;
+      },
       complete: async (selected) => {
         calls.push(selected);
         return {
@@ -101,6 +104,7 @@ async function using(run) {
       own,
       ctx,
       calls,
+      modelLookups,
       notifications,
       states,
       compact,
@@ -182,20 +186,26 @@ test("unavailable summary models stop compaction rather than falling back to the
     );
     assert.equal(h.states.at(-1).phase, "failed");
   }));
-test("a lead-only custom summary cannot silently send a member summary to GPT", () =>
+test("a member without an override uses its current model even if the lead has a custom route", () =>
   using(async (h) => {
     fs.unlinkSync(path.join(h.directory, "member-compaction-summary.json"));
+    h.ctx.model = {
+      id: "flash",
+      provider: "summary-provider",
+      contextWindow: 64000,
+      maxTokens: 4096,
+      reasoning: false,
+    };
     fs.writeFileSync(
       path.join(h.directory, "compaction-summary.json"),
       JSON.stringify({ model: "summary-provider/flash" }),
     );
     const result = await h.compact();
-    assert.equal(result.cancel, true);
-    assert.equal(h.calls.length, 0);
-    assert.match(h.notifications.join("\n"), /fallback is blocked/);
+    assert.ok(result.compaction);
+    assert.equal(h.calls[0].id, "flash");
   }));
 
-test("unconfigured member summary mode also uses current-model chunking while budget-only misconfiguration stays blocked", () =>
+test("a budget-only member config also uses current-model chunking", () =>
   using(async (h) => {
     fs.unlinkSync(path.join(h.directory, "member-compaction-summary.json"));
     h.ctx.model = {
@@ -206,13 +216,12 @@ test("unconfigured member summary mode also uses current-model chunking while bu
       reasoning: false,
     };
     assert.ok((await h.compact()).compaction);
-    assert.equal(h.calls[0].id, "flash");
+    assert.ok(h.modelLookups.includes("summary-provider/flash"));
     fs.mkdirSync(path.dirname(h.own), { recursive: true });
     fs.writeFileSync(h.own, JSON.stringify({ maxInputChars: 4000 }));
     const result = await h.compact();
-    assert.equal(result.cancel, true);
-    assert.equal(h.calls.length, 1);
-    assert.match(h.notifications.join("\n"), /Summary model is missing/);
+    assert.ok(result.compaction);
+    assert.ok(h.modelLookups.includes("summary-provider/flash"));
   }));
 
 test(

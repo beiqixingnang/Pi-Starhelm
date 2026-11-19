@@ -201,7 +201,7 @@ test(
     }),
 );
 
-test("an explicit opt-out still reports native compaction while configured failures never select another model", () =>
+test("an explicit opt-out and model override can return to current-model compaction", () =>
   harness(async (h) => {
     const off = JSON.parse(
       (await h.tool("compaction_model", { action: "off", target: "lead" }))
@@ -221,6 +221,18 @@ test("an explicit opt-out still reports native compaction while configured failu
     assert.equal(route.engine, "chunked");
     assert.equal(route.modelSelection, "configured");
     assert.equal(route.model, "mission-fixture/summary");
+    const current = JSON.parse(
+      (
+        await h.tool("compaction_model", {
+          action: "set",
+          target: "lead",
+          model: "current",
+        })
+      ).content[0].text,
+    );
+    assert.equal(current.engine, "chunked");
+    assert.equal(current.modelSelection, "current-model");
+    assert.equal(current.model, "mission-fixture/model");
   }));
 
 test("offline provider selects the new command in a batched wake and does not replay healthy faults on maintenance", () =>

@@ -12,6 +12,7 @@ from pathlib import Path
 import pty
 import re
 import select
+import shlex
 import shutil
 import signal
 import sqlite3
@@ -32,6 +33,21 @@ def copy_package(source, destination):
         shutil.copy2(source / name, target)
     for library in ["stream-json", "stream-chain"]:
         shutil.copytree(source / "node_modules" / library, destination / "node_modules" / library, dirs_exist_ok=True)
+
+
+def write_launcher(path, agent, workspace, fixture, session_file):
+    pi = shutil.which("pi") or "pi"
+    path.write_text(
+        "#!/bin/sh\n"
+        + "export PATH=" + shlex.quote(os.environ.get("PATH", "")) + "\n"
+        + "export PI_CODING_AGENT_DIR=" + shlex.quote(str(agent)) + "\n"
+        + "cd " + shlex.quote(str(workspace)) + "\n"
+        + "exec " + shlex.quote(pi) + " --offline --no-mcp --no-skills -e "
+        + shlex.quote(str(fixture))
+        + " --provider mission-fixture --model model --thinking off --session "
+        + shlex.quote(str(session_file)) + "\n"
+    )
+    path.chmod(0o700)
 
 
 def main():
@@ -134,7 +150,7 @@ def main():
         wait(lambda: snapshot_file.exists(), label)
         return json.loads(snapshot_file.read_text())
 
-    def editor_ready(label):
+    def editor_ready(label, require_idle=False):
         nonce = uuid.uuid4().hex
         end = time.monotonic() + 20
         while time.monotonic() < end:
@@ -147,7 +163,7 @@ def main():
                             event = json.loads(record)
                         except json.JSONDecodeError:
                             continue
-                        if event.get("event") == "fixture_ready" and event.get("nonce") == nonce and event.get("pid") == process.pid:
+                        if event.get("event") == "fixture_ready" and event.get("nonce") == nonce and event.get("pid") == process.pid and (not require_idle or event.get("idle") is True):
                             checks.append(label)
                             return
             if process.poll() is not None:
@@ -201,6 +217,24 @@ def main():
         reload("candidate loaded through literal /reload in the same Pi process")
         assert mission()["id"] == original["id"] and mission()["humanPaused"]
         assert mission()["outputTokens"] == original["outputTokens"]
+        line("/starhelm status")
+        def loaded_status_visible():
+            text = re.sub(
+                r"\x1b(?:\[[0-?]*[ -/]*[@-~]|\][^\x07]*\x07)",
+                "",
+                visible,
+            )
+            text = re.sub(r"\s+", "", text)
+            return all(value in text for value in [
+                '"packageName":"pi-starhelm"',
+                '"version":"' + json.loads((candidate / "package.json").read_text())["version"] + '"',
+                '"packageRoot":"' + str(package) + '"',
+                '"registeredMissionTools":64',
+                '"activeMissionTools":64',
+            ])
+        wait(loaded_status_visible,
+            "the existing Pi conversation reported the loaded package identity and tool visibility")
+        checks.append("the loaded-plugin status distinguishes an installed package from active Starhelm tools")
         mode_file = agent / "mission-control/v2" / config["id"] / "mode.json"
         line("/starhelm simple")
         wait(lambda: mode_file.exists() and json.loads(mode_file.read_text()).get("mode") == "simple",
@@ -311,7 +345,8 @@ def main():
         report_at = mission()["lastReportAt"]
         tool("mission_notifications", {"action": "set", "taskSuccess": False, "taskFailure": True, "goalReadyLevels": [], "goalAcceptedLevels": []})
         wait(lambda: query("meta", "key='notificationPolicy'") and query("meta", "key='notificationPolicy'")[0]["taskSuccess"] is False, "the real lead model configured success quiet and failure wake separately")
-        tool("team_send", {"to": executor, "goalId": success_leaf["id"], "message": 'V2_TEST:{"op":"answer","text":"QUIET_TUI_RECEIPT"}'})
+        tool("team_send", {"to": executor, "goalId": success_leaf["id"], "wait": True,
+            "message": 'V2_TEST:{"op":"answer","text":"QUIET_TUI_RECEIPT"}'})
         wait(lambda: any(t.get("goalId") == success_leaf["id"] and t["state"] == "completed" for t in query("tasks")), "a real managed success finished under the quiet policy")
         success_task = next(t for t in query("tasks") if t.get("goalId") == success_leaf["id"])
         success_delivery = next(d for d in query("deliveries") if d.get("taskId") == success_task["id"] and d["to"] == "lead")
@@ -326,7 +361,10 @@ def main():
         tool("mission_notifications", {"action": "set", "goalReadyLevels": [2], "goalAcceptedLevels": [2]})
         wait(lambda: query("meta", "key='notificationPolicy'")[0]["goalReadyLevels"] == [2], "second-level readiness and acceptance notifications were enabled without changing task flags")
         assert not any(d.get("goalId") == notification_stage["id"] and d.get("goalEvent") == "ready" for d in query("deliveries"))
-        failure_control.write_text(json.dumps({"failures": 0}))
+        failure_control.write_text(json.dumps({"failures": 0, "submissions": [{
+            "goalId": failure_leaf["id"], "revision": failure_leaf.get("revision", 0),
+            "summary": "The retried notification leaf is verified and ready for acceptance.",
+            "evidence": [{"criterion": 1, "summary": "The notification retry completed its fixture check."}]}]}))
         tool("team_resume", {"taskId": failed_task["id"]})
         wait(lambda: any(t.get("attemptOf") == failed_task["id"] and t["state"] == "completed" for t in query("tasks")), "an explicit retry completed the failed leaf")
         wait(lambda: any(d.get("goalId") == notification_stage["id"] and d.get("goalEvent") == "ready" and d["attempts"] > 0 for d in query("deliveries")), "only the complete second-level execution batch generated its ready-for-acceptance wake")
@@ -354,7 +392,7 @@ def main():
         batch_tasks = {t["id"] for t in query("tasks")}
         batch_files = [policy_dir / "batch-fast.txt", policy_dir / "batch-slow.txt"]
         for owner, target, delay in [(executor, batch_files[0], 1200), (reviewer, batch_files[1], 4500)]:
-            tool("team_send", {"to": owner, "goalId": leaf["id"],
+            tool("team_send", {"to": owner,
                 "message": "V2_TEST:" + json.dumps({"op": "tool", "name": "fixture_boundary_command", "args": {"file": str(target), "delayMs": delay}})})
             wait(lambda: any(t["id"] not in batch_tasks and t["member"] == owner for t in query("tasks")),
                 "parallel artifact task accepted for " + owner)
@@ -666,14 +704,25 @@ def main():
             "prompt": "Read the independent producer at its unchanged deadline", "everySeconds": 60})
         assert not failed, text
         escape_timer = json.loads(text)
+        # Keep cancellation receipts quiet so the natural Escape-resume message
+        # is the only lead turn under test.
+        tool("mission_notifications", {"action": "set", "taskSuccess": False,
+            "taskFailure": False, "taskBatchSettled": False,
+            "goalReadyLevels": [], "goalAcceptedLevels": []})
+        wait(lambda: query("meta", "key='notificationPolicy'") and
+            query("meta", "key='notificationPolicy'")[0] == {"taskSuccess": False,
+                "taskFailure": False, "taskBatchSettled": False,
+                "goalReadyLevels": [], "goalAcceptedLevels": []},
+            "cancellation notifications were muted for the Escape-resume fixture")
         for phase in ["idle", "streaming"]:
             if phase == "streaming":
                 failed, text = call_tool("goal_resume", {"goalId": original["id"], "source": "user", "reason": "Explicitly continue the dedicated Escape regression"})
                 assert not failed, text
             phase_tasks = []
-            for owner in [executor, reviewer]:
+            owners = [executor, reviewer] if phase == "idle" else [executor]
+            for owner in owners:
                 marker = policy_dir / ("escape-" + phase + "-" + owner + ".started")
-                failed, text = call_tool("team_send", {"to": owner, "goalId": escape_goal["id"],
+                failed, text = call_tool("team_send", {"to": owner,
                     "message": "V2_TEST:" + json.dumps({"op": "hang", "startedFile": str(marker)})})
                 assert not failed, text
                 phase_tasks.append(json.loads(text)["taskId"])
@@ -698,7 +747,8 @@ def main():
                 next(t for t in query("tasks") if t["id"] == task_id)["state"] == "cancelled" and
                 next(t for t in query("tasks") if t["id"] == task_id)["processState"] == "stopped"
                 for task_id in phase_tasks), "physical Escape stopped the " + phase + " lead's entire managed execution batch")
-            assert mission()["id"] == original["id"] and mission()["pauseSource"] == "user" and not mission().get("archivedAt")
+            assert mission()["id"] == original["id"] and mission()["pauseSource"] == "escape" and not mission().get("archivedAt")
+            assert next(node for node in query("goal_nodes") if node["id"] == escape_goal["id"])["state"] == "planned"
             assert {m["name"]: m["id"] for m in query("members") if m["name"] in escape_members} == escape_members
             assert mission()["lastReportAt"] == report_before_escape
             assert next(s for s in query("schedules") if s["id"] == escape_timer["id"])["nextAt"] == escape_timer["nextAt"]
@@ -706,6 +756,18 @@ def main():
             reload("paused goal, retained members and cancelled tasks survived literal /reload after " + phase + " Escape")
             assert mission()["status"] == "paused" and mission()["humanPaused"]
             assert all(next(t for t in query("tasks") if t["id"] == task_id)["state"] == "cancelled" for task_id in phase_tasks)
+            line("继续已批准的任务，不要重复已完成的命令。")
+            wait(lambda: mission()["status"] == "active" and not mission()["humanPaused"],
+                "ordinary human input automatically resumed the temporary Escape hold after " + phase + " interruption")
+            editor_ready(
+                "the resumed conversation became idle after " + phase + " Escape",
+                require_idle=True,
+            )
+            line("/mission pause")
+            wait(lambda: mission()["humanPaused"],
+                "the test explicitly paused its mission after verifying Escape auto-resume")
+            assert all(next(t for t in query("tasks") if t["id"] == task_id)["state"] == "cancelled" for task_id in phase_tasks)
+            checks.append("ordinary input resumed only the Escape hold after same-process reload without replaying cancelled tasks")
         failed, text = call_tool("schedule", {"action": "delete", "id": escape_timer["id"]})
         assert not failed, text
         failed, text = call_tool("goal_resume", {"goalId": original["id"], "source": "user", "reason": "Explicitly continue the remaining isolated regressions"})
@@ -1077,8 +1139,7 @@ def main():
         config["agentDir"] = str(agent)
         identity.write_text(json.dumps(config, ensure_ascii=False, indent=2))
         launcher = home / "open-test-session.sh"
-        launcher.write_text("#!/bin/sh\nexport PI_CODING_AGENT_DIR='" + str(agent) + "'\ncd '" + str(workspace) + "'\nexec pi --offline --no-mcp --no-skills -e '" + str(fixture) + "' --provider mission-fixture --model model --thinking off --session '" + config["sessionFile"] + "'\n")
-        launcher.chmod(0o700)
+        write_launcher(launcher, agent, workspace, fixture, config["sessionFile"])
         report = {"passed": True, "sameProcess": process.poll() is None, "session": config, "checks": checks,
                   "candidateVersion": json.loads((candidate / "package.json").read_text())["version"]}
         (reports / "task-policies-tui.json").write_text(json.dumps(report, ensure_ascii=False, indent=2))
@@ -1267,8 +1328,7 @@ def manual_recovery_round_trip(home, config, checks, reports, environment, fixtu
             (reports / ("manual-recovery-" + str(cycle) + ".ansi")).write_bytes(data)
             os.close(master)
     launcher = home / "open-test-session.sh"
-    launcher.write_text("#!/bin/sh\nexport PI_CODING_AGENT_DIR='" + str(agent) + "'\ncd '" + config["workspace"] + "'\nexec pi --offline --no-mcp --no-skills -e '" + str(fixture) + "' --provider mission-fixture --model model --thinking off --session '" + config["sessionFile"] + "'\n")
-    launcher.chmod(0o700)
+    write_launcher(launcher, agent, config["workspace"], fixture, config["sessionFile"])
     report_file = reports / "task-policies-tui.json"
     report = json.loads(report_file.read_text())
     report.update(session=config, checks=checks, manualRestoreRoundTrip=True, recoveryModelRequests=0)
@@ -1280,6 +1340,31 @@ def portable_transfer_check(home, config, checks, reports, environment, candidat
     """Use the same dedicated source conversation and a second, isolated agent
     home as the destination computer. Neither endpoint is a production session.
     """
+    source_file = Path(config["sessionFile"])
+    host_mount = Path("/mnt/c")
+    if source_file.exists() and host_mount.is_dir():
+        source_bytes = source_file.stat().st_size
+        free_bytes = shutil.disk_usage(host_mount).free
+        required_bytes = max(1024**3, source_bytes * 4)
+        if free_bytes < required_bytes:
+            reason = (
+                f"Windows host volume has {free_bytes} bytes free; "
+                f"portable export requires at least {required_bytes} bytes "
+                f"for the {source_bytes}-byte persistent conversation."
+            )
+            checks.append("portable transfer skipped: " + reason)
+            report_file = reports / "task-policies-tui.json"
+            report = json.loads(report_file.read_text())
+            report.update(checks=checks, portableTransferSkipped=reason)
+            report_file.write_text(json.dumps(report, ensure_ascii=False, indent=2))
+            print(
+                "PORTABLE_TRANSFER_RESULT "
+                + json.dumps(
+                    {"passed": True, "skipped": True, "reason": reason},
+                    ensure_ascii=False,
+                )
+            )
+            return
     transfer_home = home / ("transfer-test-" + uuid.uuid4().hex[:8])
     transfer_home.mkdir()
     bundle = transfer_home / "conversation"

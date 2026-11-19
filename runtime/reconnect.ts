@@ -1,32 +1,30 @@
 export interface ReconnectOptions {
   enabled?: boolean;
-  maxRetries?: number;
+  maxRetries?: number | null;
   delayMs?: number;
 }
 export interface ReconnectPolicy {
   enabled: boolean;
-  maxRetries: number;
+  maxRetries: number | null;
   delayMs: number;
 }
-export function reconnectPolicy(
-  raw: ReconnectOptions = {},
-  nativeEnabled = true,
-): ReconnectPolicy {
-  const maxRetries = raw.maxRetries ?? 10,
+export function reconnectPolicy(raw: ReconnectOptions = {}): ReconnectPolicy {
+  const maxRetries = raw.maxRetries ?? null,
     delayMs = raw.delayMs ?? 5000;
   if (
     (typeof raw.enabled !== "undefined" && typeof raw.enabled !== "boolean") ||
-    !Number.isSafeInteger(maxRetries) ||
-    maxRetries < 0 ||
-    maxRetries > 100 ||
+    (maxRetries !== null &&
+      (!Number.isSafeInteger(maxRetries) ||
+        maxRetries < 0 ||
+        maxRetries > 100)) ||
     !Number.isSafeInteger(delayMs) ||
     delayMs < 0 ||
     delayMs > 300000
   )
     throw new Error(
-      "Invalid reconnect settings: maxRetries 0..100, delayMs 0..300000",
+      "Invalid reconnect settings: maxRetries 0..100 or unlimited, delayMs 0..300000",
     );
-  return { enabled: raw.enabled ?? nativeEnabled, maxRetries, delayMs };
+  return { enabled: raw.enabled ?? true, maxRetries, delayMs };
 }
 export function contextLimitError(text: string) {
   if (/rate limit|too many requests/i.test(text)) return false;

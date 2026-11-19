@@ -21,7 +21,7 @@ test("goal revisions fence old decision answers and external event tokens withou
   using(async (h) => {
     h.kernel.requireDecision("Which target?");
     const old = h.kernel.store.mission().decision;
-    h.kernel.onHumanInput("Use A");
+    await h.kernel.onHumanInput("Use A");
     h.kernel.updateGoal("Refined target selection");
     const current = h.kernel.store.mission().decision;
     assert.notEqual(current.id, old.id);
@@ -31,7 +31,7 @@ test("goal revisions fence old decision answers and external event tokens withou
       () => h.kernel.resolveDecision(current.id, "Use A"),
       /direct human/,
     );
-    h.kernel.onHumanInput("Use A for the refined goal");
+    await h.kernel.onHumanInput("Use A for the refined goal");
     h.kernel.resolveDecision(current.id, "Use A for the refined goal");
     const wait = h.kernel.waitExternal("Producer", 160000);
     h.kernel.updateGoal("Refined waiting objective");
@@ -63,7 +63,7 @@ test("answering a business decision cannot renew a configured output budget", ()
       const m = h.kernel.store.mission();
       m.outputTokens = 100;
       h.kernel.store.set("mission", m);
-      h.kernel.onHumanInput("Use A");
+      await h.kernel.onHumanInput("Use A");
       assert.throws(() => h.kernel.resolveDecision(id, "Use A"), /hold/);
       assert.equal(h.kernel.store.mission().blocker.kind, "budget");
     },
@@ -598,7 +598,7 @@ test("external provider failures do not hammer invalid credentials; a healthy hu
       h.advance(86_400_000);
       await h.kernel.tick();
       assert.equal(h.wakes.length, 1, reason);
-      h.kernel.onHumanInput("Credentials repaired; inspect existing work");
+      await h.kernel.onHumanInput("Credentials repaired; inspect existing work");
       h.kernel.leadStarted();
       assert.ok(h.kernel.admitLeadRequest());
       h.kernel.leadMessage(false);
@@ -716,7 +716,7 @@ test("goal edits and recovery cannot clear user pause, Escape, relocation or bud
       assert.equal(h.kernel.snapshot().held, true);
       await h.restart();
       assert.equal(h.kernel.snapshot().held, true);
-      h.kernel.onHumanInput("Continue after Escape");
+      await h.kernel.onHumanInput("Continue after Escape");
       h.kernel.store.set("relocationHold", true);
       h.kernel.updateGoal("Third edit");
       assert.equal(h.kernel.store.get("relocationHold"), true);
@@ -774,10 +774,10 @@ test("business decisions require exact identity and a new quoted human answer", 
     h.kernel.requireDecision("Which target?");
     const id = h.kernel.store.mission().decision.id;
     assert.throws(() => h.kernel.resolveDecision(id, "A"), /direct human/);
-    h.kernel.onHumanInput("What is the progress?");
+    await h.kernel.onHumanInput("What is the progress?");
     assert.equal(h.kernel.store.mission().status, "waiting_user");
     assert.throws(() => h.kernel.resolveDecision(id, "A"), /direct human/);
-    h.kernel.onHumanInput("Use target A");
+    await h.kernel.onHumanInput("Use target A");
     assert.throws(
       () => h.kernel.resolveDecision("old", "Use target A"),
       /identity/,

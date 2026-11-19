@@ -1,26 +1,26 @@
 # Pi 源码快照
 
-`pi-1.5.0/` 保存官方 Pi v1.5.0 标签的源码，供扩展 API、生命周期及底层机制核对。当前开发和 CI 统一以 Pi1.5.0 为基线；不再维护 Pi1.3 兼容测试。宿主仍独立安装，源码不会被插件加载。
+`pi-1.5.2/` 保存官方 Pi v1.5.2 标签的源码，作为当前扩展 API、生命周期和底层机制参考。旧的 `pi-1.5.0/` 快照保留给历史研究记录。宿主仍独立安装，源码不会被插件加载。
 
 | 项目 | 内容 |
 | --- | --- |
-| 标签 | `v1.5.0` |
-| 提交 | `f9a26365568127461c47a07a37dcb42c140a3ac5` |
-| 归档 SHA-256 | `1015146ce05a9219a0256861013633b10609668c6d14187fc8f47f540befaea3` |
-| 归档大小 | 10,425,575 字节 |
-| 文件数量 | 2,949 |
-| 文件总大小 | 34,603,541 字节 |
+| 标签 | `v1.5.2` |
+| 提交 | `b4afdddf44e059c67ccf5097e5317d913521b470` |
+| 归档 SHA-256 | `24867a3b2b203a65bc88d09afb20c7aa2db943159cf9d5add1d6e449bebe88ad` |
+| 归档大小 | 14,851,085 字节 |
+| 文件数量 | 4,296 |
+| 文件总大小 | 50,093,930 字节 |
 | 上游项目 | https://github.com/earendil-works/pi |
-| 许可证 | [MIT](pi-1.5.0/LICENSE)，Copyright (c) 2025 Mario Zechner |
+| 许可证 | [MIT](pi-1.5.2/LICENSE)，Copyright (c) 2025 Mario Zechner |
 
 元数据和文件树校验值保存在 [pi-source.json](pi-source.json)。归档按固定提交下载，逐文件提取并核对版本；没有应用本插件补丁、安装依赖或执行上游脚本。校验标识归档身份，不声明校验官方发布签名。跨平台文件树检查仅规范化文本 CRLF/LF，允许 Git 按上游属性检出 Windows 脚本。
 
 ## 使用
 
-- [源码入口说明](pi-1.5.0/README.md)
-- [Pi coding-agent 源码](pi-1.5.0/packages/coding-agent/src)
-- [Pi 扩展文档](pi-1.5.0/packages/coding-agent/docs/extensions.md)
-- [Pi 上游开发规则](pi-1.5.0/AGENTS.md)
+- [源码入口说明](pi-1.5.2/README.md)
+- [Pi coding-agent 源码](pi-1.5.2/packages/coding-agent/src)
+- [Pi 扩展文档](pi-1.5.2/packages/coding-agent/docs/extensions.md)
+- [Pi 上游开发规则](pi-1.5.2/AGENTS.md)
 
 源码内的 `.pi`、`.github`、锁文件、测试样本、生成数据和二进制测试资源均属于原始归档，保留以便完整查阅。没有加入用户的个人 Pi 配置、API 密钥或聊天会话。
 

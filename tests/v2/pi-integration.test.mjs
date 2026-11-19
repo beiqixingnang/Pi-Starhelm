@@ -423,7 +423,7 @@ test(
       const paused = await h.snapshot();
       assert.equal(paused.mission.id, before.mission.id);
       assert.equal(paused.mission.status, "paused");
-      assert.equal(paused.mission.pauseSource, "user");
+      assert.equal(paused.mission.pauseSource, "escape");
       assert.equal(paused.mission.archivedAt, undefined);
       assert.deepEqual(
         paused.members.map((m) => m.id),
@@ -1053,123 +1053,6 @@ test(
           .content[0].text,
       );
       assert.equal(definition.revision, 0);
-    }),
-);
-
-test(
-  "real model archives inactive main goals by ID and preserves the selected user pause through reload",
-  { timeout: 20000 },
-  () =>
-    harness(async (h) => {
-      const roots = JSON.parse(
-        (
-          await h.tool("goal_plan", {
-            goals: [
-              {
-                objective: "Current governance goal",
-                criteria: ["Keep selected"],
-              },
-              {
-                objective: "Obsolete planned goal",
-                criteria: ["Archive without activation"],
-              },
-              {
-                objective: "Obsolete paused goal",
-                criteria: ["Archive without resuming"],
-              },
-            ],
-          })
-        ).content[0].text,
-      );
-      const planned = roots.created;
-      await h.tool("goal_pause", { goalId: planned[2].id });
-      await h.tool("goal_pause", { goalId: planned[0].id, source: "user" });
-      const current = (await h.snapshot()).mission;
-      const plan = ({ outputTokens, ...rest }) => rest;
-      for (const root of planned.slice(1)) {
-        await h.session.prompt(
-          "V2_TEST:" +
-            JSON.stringify({
-              op: "tool",
-              name: "goal_stop",
-              args: {
-                goalId: root.id,
-                reason: "User requested archive of obsolete plan",
-              },
-              noRepeatWake: true,
-            }),
-        );
-        const result = h.events.findLast(
-          (event) =>
-            event.type === "tool_execution_end" &&
-            event.toolName === "goal_stop",
-        );
-        assert.ok(result && !result.result.isError, JSON.stringify(result));
-        assert.equal(JSON.parse(result.result.content[0].text).id, root.id);
-        assert.deepEqual(plan((await h.snapshot()).mission), plan(current));
-      }
-      const beforeReload = (await h.snapshot()).mission;
-      await h.session.reload();
-      assert.deepEqual((await h.snapshot()).mission, beforeReload);
-      const history = JSON.parse(
-        (await h.tool("lifecycle_history")).content[0].text,
-      );
-      for (const root of planned.slice(1))
-        assert.ok(
-          history.goals.some(
-            (goal) => goal.id === root.id && goal.status === "stopped",
-          ),
-        );
-    }),
-);
-
-test(
-  "real goal_pause restores a stopped goal by ID as a paused editable plan",
-  { timeout: 20000 },
-  () =>
-    harness(async (h) => {
-      const root = JSON.parse(
-        (
-          await h.tool("goal_start", {
-            objective: "Existing retained goal",
-            criteria: ["Keep this goal ID"],
-          })
-        ).content[0].text,
-      );
-      await h.tool("goal_stop", {
-        goalId: root.id,
-        reason: "Legacy temporary pause was stopped instead",
-      });
-      const paused = await h.tool("goal_pause", {
-        goalId: root.id,
-        revision: 0,
-      });
-      assert.ok(!paused.isError, paused.content[0].text);
-      assert.equal(JSON.parse(paused.content[0].text).restoredStopped, true);
-      const edited = await h.tool("goal_update", {
-        goalId: root.id,
-        revision: 0,
-        objective: "Revised retained goal",
-        criteria: ["Edit without restart"],
-      });
-      assert.ok(!edited.isError, edited.content[0].text);
-      await h.session.reload();
-      const status = await h.snapshot();
-      assert.equal(status.mission.id, root.id);
-      assert.equal(status.mission.status, "paused");
-      assert.equal(status.tasks.length, 0);
-      const history = JSON.parse(
-        (await h.tool("lifecycle_history")).content[0].text,
-      );
-      assert.ok(
-        history.goals.some(
-          (goal) => goal.id === root.id && goal.status === "stopped",
-        ),
-      );
-      await h.session.prompt("请继续当前目标");
-      assert.ok(!JSON.parse(h.session.getLastAssistantText()).isError);
-      assert.equal((await h.snapshot()).mission.id, root.id);
-      assert.equal((await h.snapshot()).mission.status, "active");
     }),
 );
 
@@ -2701,7 +2584,6 @@ test(
       await h.session.reload();
       const active = h.session.agent.state.tools.map((tool) => tool.name);
       for (const name of [
-        "goal_stop",
         "team_disband",
         "lifecycle_history",
         "schedule",
@@ -4130,40 +4012,24 @@ test(
 );
 
 test(
-  "real user stop fences persistent cooldown probes even after reload",
+  "real Pi resumes a paused goal when the user sends the next message",
   { timeout: 15000 },
   () =>
     harness(async (h) => {
-      await fs.writeFile(
-        path.join(process.env.PI_CODING_AGENT_DIR, "mission-control.json"),
-        JSON.stringify({ recoveryMaxRequests: 1, recoveryCooldownMs: 1000 }),
-      );
-      await h.session.reload();
       await h.tool("goal_start", {
-        objective: "Respect user stop during an outage",
-        criteria: ["No automatic resume"],
+        objective: "Continue after a human message",
+        criteria: ["Preserve the current goal"],
       });
+      await h.session.prompt("/mission pause");
+      assert.equal((await h.snapshot()).mission.status, "paused");
       await h.session.prompt(
-        "V2_TEST:" +
-          JSON.stringify({
-            op: "flaky",
-            key: crypto.randomUUID(),
-            failures: 100,
-            error: "This operation was aborted",
-          }),
+        'V2_TEST:{"op":"answer","text":"AUTO_RESUMED_BY_MESSAGE"}',
       );
-      assert.equal((await h.snapshot()).recovery.phase, "exhausted");
-      await h.session.prompt("/mission stop");
-      const count = () =>
-        h.events.filter(
-          (e) => e.type === "message_end" && e.message?.role === "assistant",
-        ).length;
-      const stopped = count();
-      await h.session.reload();
-      await new Promise((r) => setTimeout(r, 2200));
-      assert.equal(count(), stopped);
-      assert.equal((await h.snapshot()).mission.status, "stopped");
-      assert.equal((await h.snapshot()).mission.humanPaused, true);
+      assert.equal(h.session.getLastAssistantText(), "AUTO_RESUMED_BY_MESSAGE");
+      const resumed = (await h.snapshot()).mission;
+      assert.equal(resumed.status, "active");
+      assert.equal(resumed.humanPaused, false);
+      assert.equal(resumed.pauseSource, undefined);
     }),
 );
 
@@ -4378,6 +4244,7 @@ test(
         "project_recover",
       ])
         assert.ok(declared.names.includes(name), `not declared: ${name}`);
+      assert.ok(!declared.names.includes("goal_stop"));
       assert.equal(
         declared.schema.properties.tasks.items.properties.expectedEpoch.type,
         "integer",
@@ -4385,9 +4252,9 @@ test(
       const catalog = JSON.parse(
         (await h.tool("mission_capabilities")).content[0].text,
       );
-      assert.equal(catalog.tools.length, 64);
-      assert.ok(catalog.tools.every((t) => t.active));
-      assert.ok(catalog.tools.every((t) => t.description.length <= 200));
+      assert.equal(catalog.tools.total, 63);
+      assert.equal(catalog.tools.active, 63);
+      assert.deepEqual(catalog.tools.inactive, []);
       const planTool = JSON.parse(
         (
           await h.tool("mission_capabilities", {

@@ -96,7 +96,7 @@ test("relocation hold survives restart and ordinary input; overdue reminders res
     await kernel.close();
     kernel = make();
     kernel.start(false);
-    kernel.onHumanInput("Only asking for status");
+    await kernel.onHumanInput("Only asking for status");
     await kernel.tick();
     assert.equal(wakes.length, 0);
     await kernel.userControl("resume");

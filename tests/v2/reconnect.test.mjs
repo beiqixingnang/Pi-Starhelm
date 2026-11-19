@@ -110,13 +110,14 @@ async function harness(fn, options = {}) {
     else process.env.MC_V2_RECONNECT = original;
   }
 }
-test("reconnect defaults are ten retries at a fixed five seconds; invalid settings fail closed", () => {
+test("Starhelm retries are enabled without a limit by default; invalid settings fail closed", () => {
   assert.deepEqual(reconnectPolicy(), {
     enabled: true,
-    maxRetries: 10,
+    maxRetries: null,
     delayMs: 5000,
   });
-  assert.equal(reconnectPolicy({}, false).enabled, false);
+  assert.equal(reconnectPolicy({ enabled: false }).enabled, false);
+  assert.equal(reconnectPolicy({ maxRetries: 3 }).maxRetries, 3);
   assert.throws(() => reconnectPolicy({ maxRetries: -1 }));
   assert.equal(contextLimitError("custom upstream selection failed"), false);
   assert.equal(contextLimitError("maximum context exceeded"), true);
@@ -138,6 +139,18 @@ test("custom gateway errors receive ten retries without a status-code whitelist"
       1,
     );
   }));
+test("unlimited retry policy continues beyond ten transient failures", () =>
+  harness(
+    async (h) => {
+      for (let i = 1; i <= 12; i++) {
+        const result = await h.fail();
+        assert.equal(result.continue, true);
+        assert.equal(result.entries.at(-1).details.retry, i);
+        assert.equal(result.entries.at(-1).details.maxRetries, null);
+      }
+    },
+    { maxRetries: null },
+  ));
 test("native 502/429 failures count toward the same consecutive failure budget", () =>
   harness(async (h) => {
     for (let i = 0; i < 4; i++)

@@ -65,5 +65,5 @@ export function hostDependencyDir(name) {
 const version = /^(\d+)\.(\d+)\.(\d+)$/.exec(hostVersion);
 if (!version || Number(version[1]) !== 1 || Number(version[2]) < 4)
   throw new Error(
-    `Pi >=1.4.0 <2 is required; found ${hostVersion} at ${hostDir}. Upgrade this host or point PI_TEST_PACKAGE_DIR to the tested Pi1.5.0 baseline.`,
+    `Pi >=1.4.0 <2 is required; found ${hostVersion} at ${hostDir}. Upgrade this host or point PI_TEST_PACKAGE_DIR to the Pi1.5.2 baseline.`,
   );

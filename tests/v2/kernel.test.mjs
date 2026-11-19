@@ -175,7 +175,7 @@ test("Escape settles running, queued and descendant work while retaining the pau
     const paused = h.kernel.store.mission();
     assert.equal(paused.id, mission.id);
     assert.equal(paused.status, "paused");
-    assert.equal(paused.pauseSource, "user");
+    assert.equal(paused.pauseSource, "escape");
     assert.equal(paused.outputTokens, 71);
     assert.equal(paused.turns, 5);
     assert.equal(paused.archivedAt, undefined);
@@ -211,24 +211,18 @@ test("Escape settles running, queued and descendant work while retaining the pau
     await h.restart();
     assert.equal(h.kernel.store.mission().status, "paused");
     assert.equal(h.kernel.snapshot().held, true);
-    h.kernel.onHumanInput("How is it going?");
+    await h.kernel.onHumanInput("How is it going?");
     await h.kernel.tick();
-    assert.equal(h.kernel.store.mission().humanPaused, true);
-    assert.throws(
-      () => h.kernel.resumeGoal(mission.id),
-      /user|pause|continue/i,
-    );
-    h.kernel.resumeGoal(
-      mission.id,
-      "User explicitly requested continuing",
-      0,
-      "user",
-    );
+    assert.equal(h.kernel.store.mission().humanPaused, false);
+    assert.equal(h.kernel.store.mission().status, "active");
+    assert.equal(h.kernel.store.mission().pauseSource, undefined);
+    assert.equal(h.kernel.store.get("escapeHold"), undefined);
+    assert.equal(h.kernel.snapshot().held, false);
     assert.equal(h.kernel.store.mission().outputTokens, 71);
     assert.equal(
       h.workers.length,
       2,
-      "explicit resume alone must not replay cancelled tasks",
+      "resuming an Escape hold must not replay cancelled tasks",
     );
   }));
 
@@ -682,7 +676,7 @@ test("model-requested compaction waits for idle and runs only once without inven
 test("dispatch alone enrolls the mission and completion wakes without Goal or supervisor setup", () =>
   using(async (h) => {
     h.add("worker");
-    h.kernel.onHumanInput("Continue approved development overnight");
+    await h.kernel.onHumanInput("Continue approved development overnight");
     const task = h.kernel.dispatch("worker", "read the fixture");
     await flush();
     assert.equal(h.kernel.store.mission().status, "active");
@@ -707,6 +701,132 @@ test("dispatch alone enrolls the mission and completion wakes without Goal or su
     h.kernel.leadMessage(false, 3);
     h.kernel.leadSettled();
     assert.equal(h.kernel.store.deliveries("lead")[0].state, "observed");
+  }));
+
+test("asynchronous goal-bound subgoals resume the same assignment until evidence is submitted", () =>
+  using(async (h) => {
+    const [, child] = h.kernel.planGoals([
+      { key: "root", objective: "Main goal", criteria: ["Child accepted"] },
+      {
+        key: "child",
+        parentId: "root",
+        objective: "Complete the child goal",
+        criteria: ["Evidence is submitted"],
+      },
+    ]);
+    h.add("worker");
+    const task = h.kernel.dispatch("worker", "Complete the child goal", {
+      goalId: child.id,
+      continuationEnabled: true,
+    });
+    await flush();
+    h.kernel.memberRequest(h.workers[0].assignment.token, {
+      op: "tool-begin",
+      id: "first-progress",
+      callId: "first-tool",
+    });
+    h.workers[0].resolve({
+      ok: true,
+      text: "Partial worker turn",
+      processState: "stopped",
+    });
+    await flush();
+    const first = h.kernel.store.task(task.id);
+    assert.equal(first.state, "queued");
+    assert.equal(first.executionPhase, "continuation_pending");
+    assert.equal(first.continuationAttempts, 1);
+    assert.equal(first.workerActionCount, 1);
+    assert.equal(first.noProgressCount, 0);
+    assert.equal(h.wakes.length, 0);
+    assert.equal(h.kernel.store.deliveries("lead").length, 0);
+
+    h.advance(5000);
+    await h.kernel.tick();
+    assert.equal(h.workers.length, 2);
+    h.kernel.memberRequest(h.workers[1].assignment.token, {
+      op: "tool-begin",
+      id: "second-progress",
+      callId: "second-tool",
+    });
+    h.workers[1].resolve({
+      ok: true,
+      text: "Still working",
+      processState: "stopped",
+    });
+    await flush();
+    const second = h.kernel.store.task(task.id);
+    assert.equal(second.executionPhase, "continuation_pending");
+    assert.equal(second.continuationAttempts, 2);
+    assert.equal(second.workerActionCount, 2);
+    assert.equal(h.wakes.length, 0);
+
+    h.advance(15000);
+    await h.kernel.tick();
+    assert.equal(h.workers.length, 3);
+    h.kernel.memberRequest(h.workers[2].assignment.token, {
+      op: "goal-submit",
+      id: "submit-child",
+      submissions: [
+        {
+          goalId: child.id,
+          revision: child.revision,
+          summary: "The child implementation is verified and ready for review.",
+          evidence: [
+            { criterion: 1, summary: "The required artifact passed verification." },
+          ],
+        },
+      ],
+    });
+    h.workers[2].resolve({
+      ok: true,
+      text: "Evidence submitted",
+      processState: "stopped",
+    });
+    await flush();
+    assert.equal(h.kernel.store.task(task.id).state, "completed");
+    assert.equal(
+      h.kernel.store.task(task.id).executionPhase,
+      "submitted_for_review",
+    );
+    assert.ok(h.wakes.length > 0, "the lead wakes after evidence is submitted");
+  }));
+
+test("repeated clean stops without tool progress terminate bounded continuation", () =>
+  using(async (h) => {
+    const [, child] = h.kernel.planGoals([
+      { key: "root", objective: "Bounded goal", criteria: ["Child accepted"] },
+      {
+        key: "child",
+        parentId: "root",
+        objective: "Bounded child",
+        criteria: ["Evidence is submitted"],
+      },
+    ]);
+    h.add("worker");
+    const task = h.kernel.dispatch("worker", "Continue bounded child", {
+      goalId: child.id,
+      continuationEnabled: true,
+    });
+    await flush();
+    h.workers[0].resolve({
+      ok: true,
+      text: "No action yet",
+      processState: "stopped",
+    });
+    await flush();
+    assert.equal(h.kernel.store.task(task.id).executionPhase, "continuation_pending");
+    assert.equal(h.kernel.store.task(task.id).noProgressCount, 1);
+    h.advance(5000);
+    await h.kernel.tick();
+    h.workers[1].resolve({
+      ok: true,
+      text: "Still no action",
+      processState: "stopped",
+    });
+    await flush();
+    assert.equal(h.kernel.store.task(task.id).state, "failed");
+    assert.equal(h.kernel.store.task(task.id).executionPhase, "failed_terminal");
+    assert.match(h.kernel.store.task(task.id).summary, /no tool progress/i);
   }));
 
 test("busy lead leaves results durable and does not build Pi follow-up queues", () =>
@@ -736,7 +856,7 @@ test("answering an intermediate question neither stops the mission nor changes t
     h.kernel.dispatch("worker", "long work");
     await flush();
     const initial = h.kernel.snapshot().nextReportAt;
-    h.kernel.onHumanInput("What does waiting mean?");
+    await h.kernel.onHumanInput("What does waiting mean?");
     h.kernel.leadStarted();
     h.kernel.leadMessage(false, 1);
     h.kernel.leadSettled();
@@ -981,7 +1101,7 @@ test("user stop fences late results, retains identity and never resumes through 
       processState: "stopped",
     });
     await flush();
-    h.kernel.onHumanInput("What happened?");
+    await h.kernel.onHumanInput("What happened?");
     h.advance(100000);
     await h.kernel.tick();
     assert.equal(h.kernel.store.task(t.id).state, "cancelled");
@@ -1089,7 +1209,7 @@ test("user report timing persists across restart and an exhausted old mission ca
     h.kernel.dispatch("worker", "old work");
     await flush();
     await h.kernel.userControl("stop");
-    h.kernel.onHumanInput("new objective");
+    await h.kernel.onHumanInput("new objective");
     h.kernel.dispatch("worker", "new work");
     await h.kernel.tick();
     await flush();
@@ -1150,19 +1270,31 @@ test("notes to a running permitted peer are admitted through steering and confir
     assert.equal(h.kernel.store.deliveries("worker")[0].state, "observed");
   }));
 
-test("a decision needs an explicit resolution after a fresh human answer and never overrides a user pause", () =>
+test("a decision needs an explicit resolution while any new message releases a pause", () =>
   using(async (h) => {
     h.kernel.setGoal("authorized work");
     h.kernel.requireDecision("Which approved target should be used?");
     const id = h.kernel.store.mission().decision.id;
-    h.kernel.onHumanInput("What is the progress?");
+    await h.kernel.onHumanInput("What is the progress?");
     assert.equal(h.kernel.store.mission().status, "waiting_user");
-    h.kernel.onHumanInput("Use target A");
+    await h.kernel.onHumanInput("Use target A");
     h.kernel.resolveDecision(id, "Use target A");
     assert.equal(h.kernel.store.mission().status, "active");
     await h.kernel.userControl("pause");
-    h.kernel.onHumanInput("Explain the progress");
-    assert.equal(h.kernel.store.mission().status, "paused");
+    await h.kernel.onHumanInput("Explain the progress");
+    assert.equal(h.kernel.store.mission().status, "active");
+    assert.equal(h.kernel.store.mission().humanPaused, false);
+  }));
+
+test("any new human input resumes a paused goal without replaying cancelled tasks", () =>
+  using(async (h) => {
+    h.kernel.setGoal("Resume after a human message");
+    await h.kernel.userControl("pause");
+    await h.kernel.onHumanInput("Continue the approved work");
+    assert.equal(h.kernel.store.mission().status, "active");
+    assert.equal(h.kernel.store.mission().humanPaused, false);
+    assert.equal(h.kernel.store.mission().pauseSource, undefined);
+    assert.equal(h.kernel.snapshot().held, false);
   }));
 
 test("goal update and stop have explicit lifecycle records", () =>
@@ -1310,7 +1442,7 @@ test("a new natural-language human delegation resolves the exact decision withou
       () => h.kernel.resolveDecision(decision, answer),
       /direct human/,
     );
-    h.kernel.onHumanInput(answer);
+    await h.kernel.onHumanInput(answer);
     assert.equal(h.kernel.store.mission().status, "waiting_user");
     const resolved = h.kernel.resolveDecision(decision, answer);
     assert.equal(resolved.status, "active");
