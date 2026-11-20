@@ -11,6 +11,7 @@ test("runtime prompt sources contain mechanism contracts while project workflow 
   const member = read("extensions/mission-control/member.ts");
   assert.match(guidance, /leadMechanismGuidance/);
   assert.match(guidance, /memberMechanismGuidance/);
+  assert.match(guidance, /direct user question or status request, answer it first/);
   for (const obsolete of [
     "goalPlanningGuidance",
     "delegationGuidance",
