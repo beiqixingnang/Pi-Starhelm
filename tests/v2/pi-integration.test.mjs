@@ -145,6 +145,13 @@ async function harness(fn, mode = "rpc") {
         signal ?? new AbortController().signal,
       );
     };
+    const toolCall = (toolName, input = {}) =>
+      session.extensionRunner.emitToolCall({
+        type: "tool_call",
+        toolCallId: "test-" + crypto.randomUUID(),
+        toolName,
+        input,
+      });
     const view = new Proxy(session, {
       get(target, key) {
         const value = Reflect.get(target, key, target);
@@ -177,6 +184,7 @@ async function harness(fn, mode = "rpc") {
         events,
         errors,
         tool,
+        toolCall,
         snapshot,
       });
       assert.deepEqual(errors, []);
@@ -874,7 +882,7 @@ test(
 );
 
 test(
-  "natural-language goal pause, child edit and continue are executed by model tools without slash commands",
+  "model tools can pause and edit goals, while a direct user continue request resumes them",
   { timeout: 20000 },
   () =>
     harness(async (h) => {
@@ -2182,6 +2190,43 @@ test(
           else process.env[key] = value;
         }
       }
+    }),
+);
+
+test(
+  "manual reconnect retries a transient provider failure while leaving the paused goal untouched",
+  { timeout: 15000 },
+  () =>
+    harness(async (h) => {
+      await h.session.prompt("/reconnect on");
+      await h.session.prompt("/reconnect delay 0");
+      await h.tool("goal_start", {
+        objective: "Keep the previous goal paused during a separate request",
+        criteria: ["Do not resume automatically"],
+      });
+      await h.session.prompt("/mission pause");
+      assert.equal((await h.snapshot()).mission.status, "paused");
+
+      await h.session.prompt(
+        "V2_TEST:" +
+          JSON.stringify({
+            op: "flaky",
+            key: crypto.randomUUID(),
+            failures: 1,
+            error: "upstream_error: Upstream service temporarily unavailable",
+          }),
+      );
+
+      assert.equal(h.session.getLastAssistantText(), "RECOVERED_REQUEST_2");
+      assert.equal((await h.snapshot()).mission.status, "paused");
+      assert.equal((await h.snapshot()).mission.humanPaused, true);
+      assert.ok(
+        h.session.sessionManager.getEntries().some(
+          (entry) =>
+            entry.type === "custom_message" &&
+            entry.customType === "mission-reconnect",
+        ),
+      );
     }),
 );
 
@@ -4055,6 +4100,80 @@ test(
 );
 
 test(
+  "a paused goal does not block user-requested shell commands or file edits",
+  { timeout: 15000 },
+  () =>
+    harness(async (h) => {
+      await h.tool("goal_plan", {
+        goals: [
+          {
+            key: "root",
+            objective: "Keep the planned work paused",
+            criteria: ["Do not continue automatically"],
+          },
+          {
+            key: "child",
+            parentId: "root",
+            objective: "Inspect current state on request",
+            criteria: ["Allow read-only shell inspection"],
+          },
+        ],
+      });
+      await h.session.prompt("/mission pause");
+      assert.equal((await h.snapshot()).mission.status, "paused");
+
+      assert.equal(
+        await h.toolCall("bash", { command: "git status --short" }),
+        undefined,
+      );
+      assert.equal(
+        await h.toolCall("powershell", { command: "Get-Location" }),
+        undefined,
+      );
+      assert.equal(await h.toolCall("write", {}), undefined);
+      assert.equal(await h.toolCall("edit", {}), undefined);
+      assert.equal((await h.snapshot()).mission.status, "paused");
+    }),
+);
+
+test(
+  "goal slash commands set a root goal, keep pauses user-controlled, and clear by archiving history",
+  { timeout: 15000 },
+  () =>
+    harness(async (h) => {
+      assert.ok(!h.session.getActiveToolNames().includes("goal_resume"));
+      await h.session.prompt("/goal First-level command goal");
+      const first = (await h.snapshot()).mission;
+      assert.equal(first.objective, "First-level command goal");
+      let tree = JSON.parse((await h.tool("goal_tree")).content[0].text);
+      assert.equal(tree.nodeTotal, 1);
+      assert.equal(tree.nodes[0].depth, 1);
+
+      await h.session.prompt("/mission pause");
+      assert.equal((await h.snapshot()).mission.status, "paused");
+      await h.session.prompt("可以，那你开始看一下今天改了什么吧");
+      assert.equal((await h.snapshot()).mission.status, "paused");
+      await h.session.prompt("/goal resume");
+      assert.equal((await h.snapshot()).mission.status, "active");
+
+      await h.session.prompt("/goal clear");
+      assert.equal((await h.snapshot()).mission, undefined);
+      tree = JSON.parse(
+        (await h.tool("goal_tree", { rootId: first.id })).content[0].text,
+      );
+      assert.equal(tree.nodes[0].state, "cancelled");
+
+      await h.session.prompt("/goal Second-level command goal");
+      const second = (await h.snapshot()).mission;
+      assert.notEqual(second.id, first.id);
+      assert.equal(second.objective, "Second-level command goal");
+      tree = JSON.parse((await h.tool("goal_tree")).content[0].text);
+      assert.equal(tree.nodeTotal, 1);
+      assert.equal(tree.nodes[0].depth, 1);
+    }),
+);
+
+test(
   "real Pi answers questions while paused and resumes on a clear natural-language continue request",
   { timeout: 15000 },
   () =>
@@ -4290,6 +4409,7 @@ test(
         "project_recover",
       ])
         assert.ok(declared.names.includes(name), `not declared: ${name}`);
+      assert.ok(!declared.names.includes("goal_resume"));
       assert.ok(!declared.names.includes("goal_stop"));
       assert.equal(
         declared.schema.properties.tasks.items.properties.expectedEpoch.type,
@@ -4298,8 +4418,8 @@ test(
       const catalog = JSON.parse(
         (await h.tool("mission_capabilities")).content[0].text,
       );
-      assert.equal(catalog.tools.total, 63);
-      assert.equal(catalog.tools.active, 63);
+      assert.equal(catalog.tools.total, 62);
+      assert.equal(catalog.tools.active, 62);
       assert.deepEqual(catalog.tools.inactive, []);
       const planTool = JSON.parse(
         (
@@ -4322,6 +4442,7 @@ test(
       const restored = JSON.parse(h.session.getLastAssistantText());
       assert.ok(restored.names.includes("project_apply"));
       assert.ok(restored.names.includes("compaction_model"));
+      assert.ok(!restored.names.includes("goal_resume"));
       assert.ok(restored.schema.properties.target);
     }),
 );

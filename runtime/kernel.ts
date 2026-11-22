@@ -613,7 +613,7 @@ export class MissionKernel {
       let m = this.ensureMission(objective);
       if (m.humanPaused || m.status === "stopped")
         throw new Error(
-          "The user paused this mission. Only /mission resume can restore execution.",
+          "The goal is paused. Only the user can resume it with /goal resume or a direct continue request.",
         );
       m.objective = cleanText(objective, 8000);
       m.criteria = (criteria.length ? criteria : [objective])
@@ -822,7 +822,7 @@ export class MissionKernel {
         ? mission?.status === "stopped"
           ? "Use goal_pause(goalId) to explicitly restore this retained plan as paused, then goal_edit/goal_update/goal_plan. Do not resume execution just to edit."
           : "Explicitly reopen accepted scope before changing its plan."
-        : "Edit the relevant main or subgoal directly with goal_edit/goal_update/goal_plan. An edit-only request preserves the pause, budget and independent holds. Settle affected live/unknown work before definition changes. Ordinary questions leave a user/Escape pause in place; a clear natural-language continue/restart request resumes the goal and scheduled reminders without a slash command.",
+        : "Edit the relevant main or subgoal directly with goal_edit/goal_update/goal_plan. An edit-only request preserves the pause, budget and independent holds. Settle affected live/unknown work before definition changes. Ordinary questions leave a pause in place. Only a direct human continue/restart request or the user's /goal resume command resumes execution; never resume through a model tool.",
     };
   }
   resumeGoal(
@@ -832,6 +832,8 @@ export class MissionKernel {
     source: "user" | "agent" = "agent",
   ) {
     return this.store.transaction(() => {
+      if (source !== "user")
+        throw new Error("Only the user can resume a paused goal with /goal resume");
       const selected = this.store.mission();
       const id = goalId ?? selected?.id;
       if (!id) throw new Error("Specify the paused main goalId");
@@ -855,13 +857,6 @@ export class MissionKernel {
       if (mission.status !== "paused")
         throw new Error(
           "Resolve the goal's independent runtime or business hold before resuming",
-        );
-      if (
-        (mission.pauseSource !== "agent" || this.store.get("escapeHold")) &&
-        source !== "user"
-      )
-        throw new Error(
-          "Keep the user's pause for an edit-only request. On the user's natural-language continue/restart request, call goal_resume with source:user; no user slash command is needed",
         );
       if (
         this.store.get("relocationHold") ||
@@ -2969,10 +2964,11 @@ export class MissionKernel {
     this.runtimeAborted = true;
   }
   canRetryLeadRequest() {
+    const mission = this.store.mission();
+    const isManualRequest = !this.automaticTurn;
     return (
       !this.closing &&
-      !this.userHold &&
-      !this.store.mission()?.humanPaused &&
+      (isManualRequest || (!this.userHold && !mission?.humanPaused)) &&
       !this.store.get("relocationHold") &&
       this.recovery.retryAllowed()
     );

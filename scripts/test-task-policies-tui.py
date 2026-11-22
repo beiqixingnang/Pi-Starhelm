@@ -229,8 +229,8 @@ def main():
                 '"packageName":"pi-starhelm"',
                 '"version":"' + json.loads((candidate / "package.json").read_text())["version"] + '"',
                 '"packageRoot":"' + str(package) + '"',
-                '"registeredMissionTools":64',
-                '"activeMissionTools":64',
+                '"registeredMissionTools":62',
+                '"activeMissionTools":62',
             ])
         wait(loaded_status_visible,
             "the existing Pi conversation reported the loaded package identity and tool visibility")
@@ -434,8 +434,8 @@ def main():
         assert query("meta", "key='notificationPolicy'")[0] == {"taskSuccess": False, "taskFailure": True, "taskBatchSettled": False, "goalReadyLevels": [2], "goalAcceptedLevels": [2]}
         tool("mission_notifications", {"action": "reset"})
         wait(lambda: query("meta", "key='notificationPolicy'")[0]["taskSuccess"] is True, "notification defaults restored explicitly for the remaining regressions")
-        tool("goal_resume", {"reason": "Continue the remaining dedicated regressions"})
-        wait(lambda: mission()["status"] == "active", "the AI resumed its own notification-test pause without renewing the reporting cadence")
+        line("/goal resume")
+        wait(lambda: mission()["status"] == "active", "the user resumed the notification-test pause without renewing the reporting cadence")
         artifact = workspace / "decode-findings.txt"
         if artifact.exists():
             artifact.unlink()
@@ -464,13 +464,10 @@ def main():
         assert mission()["id"] == original["id"] and mission()["status"] == "paused"
         assert next(m for m in query("goal_missions") if m["id"] == companion["id"])["status"] == "paused"
         assert next(n for n in query("goal_nodes") if n["id"] == companion_leaf["id"])["revision"] == 1
-        tool("goal_resume", {"goalId": original["id"], "source": "user", "reason": "Continue this main goal after editing"})
-        wait(lambda: mission()["status"] == "active", "the AI resumed execution on the user's continue request without a slash command")
+        line("/goal resume")
+        wait(lambda: mission()["status"] == "active", "the user resumed execution with the explicit goal command")
         wait(lambda: re.search(r"目标[^\r\n]*" + re.escape(companion_title) + r"[^\r\n]*暂停中", visible) is not None, "the real bottom panel showed the paused companion alongside the active main goal with one unified pause label")
-        tool("goal_resume", {"goalId": companion["id"], "reason": "AI completed its planning adjustment"})
-        wait(lambda: next(m for m in query("goal_missions") if m["id"] == companion["id"])["status"] == "active", "the AI resumed its own non-selected planning pause without switching the current goal")
-        tool("goal_pause", {"goalId": companion["id"]})
-        wait(lambda: next(m for m in query("goal_missions") if m["id"] == companion["id"])["status"] == "paused", "the AI could pause the companion again while retaining its edits")
+        assert next(m for m in query("goal_missions") if m["id"] == companion["id"])["status"] == "paused"
         line("/mission pause")
         wait(lambda: mission()["humanPaused"], "test goal paused for retention")
         reload("second /reload preserved test goal, scope and acceptance")
@@ -716,8 +713,8 @@ def main():
             "cancellation notifications were muted for the Escape-resume fixture")
         for phase in ["idle", "streaming"]:
             if phase == "streaming":
-                failed, text = call_tool("goal_resume", {"goalId": original["id"], "source": "user", "reason": "Explicitly continue the dedicated Escape regression"})
-                assert not failed, text
+                line("/goal resume")
+                wait(lambda: mission()["status"] == "active", "user explicitly resumed before the streaming Escape fixture")
             phase_tasks = []
             owners = [executor, reviewer] if phase == "idle" else [executor]
             for owner in owners:
@@ -770,8 +767,8 @@ def main():
             checks.append("ordinary input resumed only the Escape hold after same-process reload without replaying cancelled tasks")
         failed, text = call_tool("schedule", {"action": "delete", "id": escape_timer["id"]})
         assert not failed, text
-        failed, text = call_tool("goal_resume", {"goalId": original["id"], "source": "user", "reason": "Explicitly continue the remaining isolated regressions"})
-        assert not failed, text
+        line("/goal resume")
+        wait(lambda: mission()["status"] == "active", "user explicitly resumed the goal before remaining regressions")
 
         failed, text = call_tool("context_mode", {"mode": "notes"})
         assert failed and "current user's authorization" in text
@@ -799,7 +796,7 @@ def main():
         failed, text = call_tool("mission_capabilities", {})
         assert not failed, text
         catalog = json.loads(text)
-        assert len(catalog["tools"]) == 64 and all(len(tool["description"]) <= 200 for tool in catalog["tools"])
+        assert len(catalog["tools"]) == 62 and all(len(tool["description"]) <= 200 for tool in catalog["tools"])
         checks.append("expanded tool catalog remained complete valid JSON without truncating the new plan tools")
 
         failed, text = call_tool("goal_plan_update", {"goalId": original["id"], "plan": "Parent roadmap: reuse valid evidence, implement the approved batch and verify its output.", "planRevision": 0})

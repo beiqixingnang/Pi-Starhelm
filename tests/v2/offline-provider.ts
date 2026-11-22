@@ -335,12 +335,7 @@ export default function (pi: ExtensionAPI) {
                   name: "goal_pause",
                   args: { source: "user", reason: goalUser },
                 }
-              : goalUser === "请继续当前目标"
-                ? {
-                    name: "goal_resume",
-                    args: { source: "user", reason: goalUser },
-                  }
-                : childEdit
+              : childEdit
                   ? {
                       name: "goal_edit",
                       args: {

@@ -1,3 +1,7 @@
+# Unreleased
+
+- Remove `goal_resume` from model tools so the AI cannot reopen a paused goal. Add `/goal resume`, `/goal clear`, and `/goal <objective>`; the last sets only the root goal while AI planning continues to own child goals. Explicit direct user continuation remains supported, while ordinary review requests preserve the pause.
+
 # 2.18.5 — simpler resume and Starhelm-owned retries (2026-11-19)
 
 - Keep goals and scheduled reminders paused while answering ordinary questions after Esc or a pause; a clear natural-language continue/restart request resumes them without a slash command or replaying cancelled tasks. Remove user-facing mission stop commands.

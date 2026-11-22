@@ -262,7 +262,7 @@ test("AI can initiate a planning pause but cannot relabel an existing user pause
     assert.equal(h.kernel.store.mission().status, "paused");
   }));
 
-test("AI resumes its own pause without renewing usage, while user pauses require the user's continue intent", () =>
+test("only a direct user continue or user-controlled resume reopens a paused goal", () =>
   using(async (h) => {
     const root = h.kernel.setGoal("Pause, adjust and continue", [
       "Preserve usage",
@@ -278,7 +278,14 @@ test("AI resumes its own pause without renewing usage, while user pauses require
       root.id,
       0,
     );
-    h.kernel.resumeGoal(root.id, "AI adjustment complete", 1);
+    assert.throws(
+      () => h.kernel.resumeGoal(root.id, "AI adjustment complete", 1),
+      /Only the user can resume/,
+    );
+    assert.equal(h.kernel.store.mission().status, "paused");
+    await h.kernel.onHumanInput("先看一下目标计划");
+    assert.equal(h.kernel.store.mission().status, "paused");
+    await h.kernel.onHumanInput("你继续做吧");
     assert.equal(h.kernel.store.mission().status, "active");
     assert.equal(h.kernel.store.mission().turns, 8);
     assert.equal(h.kernel.store.mission().outputTokens, 45);
@@ -290,21 +297,24 @@ test("AI resumes its own pause without renewing usage, while user pauses require
     h.kernel.editGoal(root.id, { nextStep: "Plan-only update" }, 1);
     assert.throws(
       () => h.kernel.resumeGoal(root.id),
-      /user's pause|source:user/,
+      /Only the user can resume/,
     );
     h.kernel.resumeGoal(root.id, "User said continue the goal", 1, "user");
     assert.equal(h.kernel.store.mission().status, "active");
     assert.equal(h.kernel.store.mission().humanPaused, false);
   }));
 
-test("model goal resume never clears workspace or budget holds", () =>
+test("user goal resume never clears workspace or budget holds", () =>
   using(async (h) => {
     const root = h.kernel.setGoal("Preserve separate control", [
       "Do not bypass holds",
     ]);
     h.kernel.pauseGoal(root.id);
     h.kernel.store.set("relocationHold", true);
-    assert.throws(() => h.kernel.resumeGoal(root.id), /independent/);
+    assert.throws(
+      () => h.kernel.resumeGoal(root.id, "User command", undefined, "user"),
+      /independent/,
+    );
     assert.equal(h.kernel.snapshot().workspaceHeld, true);
     assert.equal(h.kernel.store.mission().status, "paused");
     h.kernel.store.set("relocationHold", false);
@@ -315,7 +325,7 @@ test("model goal resume never clears workspace or budget holds", () =>
     };
     h.kernel.store.set("mission", mission);
     assert.throws(
-      () => h.kernel.resumeGoal(root.id, "User says resume", undefined, "user"),
+      () => h.kernel.resumeGoal(root.id, "User command", undefined, "user"),
       /independent/,
     );
     assert.deepEqual(h.kernel.store.mission().blocker, mission.blocker);

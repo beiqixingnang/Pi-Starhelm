@@ -739,18 +739,7 @@ export default function (pi: ExtensionAPI) {
       return;
     if (kernel.store.get("relocationHold"))
       return { block: true, reason: workspaceResumeInstruction };
-    const mission = kernel.store.mission();
-    if (!mission || ["complete", "stopped"].includes(mission.status)) return;
     try {
-      // A pre-existing flat goal remains compatible. Planned work requires focus.
-      if (
-        kernel.goals.children(mission.id).length &&
-        (mission.status !== "active" ||
-          kernel.hasUserHold() ||
-          mission.humanPaused ||
-          kernel.store.get("relocationHold"))
-      )
-        throw new Error("Resolve mission holds before executing planned work");
       kernel.goals.captureStart(event.toolCallId, event.toolName, event.input);
     } catch (error) {
       return { block: true, reason: String((error as Error).message ?? error) };
@@ -1499,7 +1488,7 @@ export default function (pi: ExtensionAPI) {
   tool(
     "goal_status",
     "Goal status",
-    "Read the runtime-owned mission and planning control. Paused goals remain editable through goal_edit/goal_update/goal_plan; resume is only needed for execution.",
+    "Read the runtime-owned mission and planning control. A paused goal stops automatic continuation of that goal, not separate user-requested work. Paused goals remain editable through goal_edit/goal_update/goal_plan; only the user can resume the paused goal.",
     Type.Object({}),
     () => {
       const status = modelStatus();
@@ -1972,26 +1961,6 @@ export default function (pi: ExtensionAPI) {
       current().pauseGoal(args.goalId, args.reason, args.revision, args.source),
   );
   tool(
-    "goal_resume",
-    "Resume paused goal",
-    "Resume a paused retained goal at the supplied revision and source. The plugin preserves usage, acceptance history and independent holds; stopped goals require an explicit prior goal_pause restore.",
-    Type.Object({
-      goalId: Type.Optional(Type.String()),
-      reason: Type.Optional(Type.String({ maxLength: 2000 })),
-      revision: Type.Optional(Type.Integer({ minimum: 0 })),
-      source: Type.Optional(
-        Type.Union([Type.Literal("agent"), Type.Literal("user")]),
-      ),
-    }),
-    (args) =>
-      current().resumeGoal(
-        args.goalId,
-        args.reason,
-        args.revision,
-        args.source,
-      ),
-  );
-  tool(
     "mission_complete",
     "Accept mission",
     "Mark the whole approved objective complete only after all work has settled and every acceptance criterion has verified evidence. Answering an intermediate question is not completion.",
@@ -2342,7 +2311,7 @@ export default function (pi: ExtensionAPI) {
     (args) => {
       if (args.action && !["status", "on"].includes(args.action))
         throw new Error(
-          "Only the user can renew mission budgets. Use goal_pause/goal_resume for AI-initiated or natural-language requested goal control. Runtime faults recover automatically through mission_status.recovery and mission_recover. Do not turn them into business decisions.",
+          "Only the user can renew mission budgets or resume a paused goal. The model may create, edit and accept goals, but cannot resume them. Runtime faults recover automatically through mission_status.recovery and mission_recover. Do not turn them into business decisions.",
         );
       return {
         maintenance: "automatic",
@@ -2651,6 +2620,55 @@ export default function (pi: ExtensionAPI) {
         refresh();
         context.ui.notify(
           "已开启复杂模式。切换前暂停的目标会在下一条消息后继续。",
+          "info",
+        );
+      } catch (error) {
+        context.ui.notify(String((error as Error).message ?? error), "error");
+      }
+    },
+  });
+
+  pi.registerCommand("goal", {
+    description: "Set a main goal, resume it, or clear the current goal plan",
+    handler: async (args, context) => {
+      try {
+        if (simpleMode())
+          throw new Error("Starhelm simple mode is active; use /starhelm complex first.");
+        const value = args.trim();
+        if (!value) throw new Error("Use /goal <objective>|resume|clear");
+        const k = current();
+        if (value === "resume") {
+          const mission = k.store.mission();
+          if (!mission || mission.status !== "paused")
+            throw new Error("There is no paused main goal to resume");
+          const resumed = k.resumeGoal(
+            mission.id,
+            "User invoked /goal resume",
+            mission.revision ?? 0,
+            "user",
+          );
+          context.ui.notify(`已恢复目标：${resumed.goal.objective}`, "info");
+          return;
+        }
+        if (value === "clear") {
+          const mission = k.store.mission();
+          if (!mission || ["complete", "stopped"].includes(mission.status))
+            throw new Error("没有可清理的未完成目标模板");
+          const archived = await k.stopGoal(
+            mission.id,
+            "User cleared the current goal template",
+          );
+          context.ui.notify(
+            `已清理当前目标模板并归档历史：${archived.objective}`,
+            "info",
+          );
+          return;
+        }
+        if (/^(resume|clear)(?:\s|$)/i.test(value))
+          throw new Error("Use /goal resume or /goal clear without extra text");
+        const goal = k.setGoal(value);
+        context.ui.notify(
+          `已设置一级目标：${goal.objective}。子目标由 AI 在批准范围内规划。`,
           "info",
         );
       } catch (error) {

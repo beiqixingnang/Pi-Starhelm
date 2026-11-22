@@ -607,7 +607,6 @@ export default async function (pi: ExtensionAPI) {
       "goal_update",
       "goal_stop",
       "goal_pause",
-      "goal_resume",
       "goal_finish",
       "mission_complete",
       "mission_control",

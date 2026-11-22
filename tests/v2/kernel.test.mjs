@@ -1308,6 +1308,8 @@ test("only a clear continue request resumes a paused goal without replaying canc
     const budgetStartedAt = h.kernel.store.mission().budgetStartedAt;
     await h.kernel.onHumanInput("Should I let it continue?");
     assert.equal(h.kernel.store.mission().status, "paused");
+    await h.kernel.onHumanInput("可以，那你开始看一下今天改了什么吧");
+    assert.equal(h.kernel.store.mission().status, "paused");
     await h.kernel.onHumanInput("我问完了，你继续做吧");
     assert.equal(h.kernel.store.mission().status, "active");
     assert.equal(h.kernel.store.mission().humanPaused, false);
